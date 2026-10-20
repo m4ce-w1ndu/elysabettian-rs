@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = [
+    "libs/ely_core",
+    "libs/ely_compiler",
+    "libs/ely_vm",
+    "libs/ely_jit",
+    "tools/ely_cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = [ "m4ce-w1ndu" ]
+license = "MIT"
+
+[workspace.dependencies]
+ely_core = { path = "libs/ely_core" }
+ely_compiler = { path = "libs/ely_compiler" }
+ely_vm = { path = "libs/ely_vm" }
+ely_jit = { path = "libs/ely_jit" }
+
+# Common external dependencies
+thiserror = "1.0"
+anyhow = "1.0"
+clap = { version = "4.4", features = ["derive"]}
+rustyline = "14.0"
+
+# Cranelift
+cranelift = "0.111"
+cranelift-jit = "0.111"
+cranelift-module = "0.111"
+target-lexicon = "0.12"
