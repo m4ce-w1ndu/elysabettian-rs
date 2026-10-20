@@ -68,4 +68,27 @@ impl Chunk {
     pub fn get_constant(&self, index: usize) -> Option<Value> {
         self.constants.get(index).copied()
     }
+
+    /// Resolves the source line number for a given bytecode instruction offset
+    /// using binary search over the compact `LineInfo` table.
+    pub fn get_line(&self, offset: usize) -> u32 {
+        if self.lines.is_empty() {
+            return 0;
+        }
+
+        let target = offset as u32;
+        match self
+            .lines
+            .binary_search_by_key(&target, |entry| entry.offset)
+        {
+            Ok(idx) => self.lines[idx].line,
+            Err(idx) => {
+                if idx == 0 {
+                    self.lines[0].line
+                } else {
+                    self.lines[idx - 1].line
+                }
+            }
+        }
+    }
 }
