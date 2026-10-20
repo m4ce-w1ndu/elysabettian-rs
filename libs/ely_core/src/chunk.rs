@@ -56,4 +56,16 @@ impl Chunk {
         let byte = opcode as u8;
         self.write_byte(byte, line);
     }
+
+    /// Appends a value to the chunk's constant pool and returns its index.
+    pub fn add_constant(&mut self, value: Value) -> usize {
+        self.constants.push(value);
+        self.constants.len() - 1
+    }
+
+    /// Retrieves a value from the constant pool by its index.
+    #[inline]
+    pub fn get_constant(&self, index: usize) -> Option<Value> {
+        self.constants.get(index).copied()
+    }
 }
