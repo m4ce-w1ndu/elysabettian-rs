@@ -4,6 +4,12 @@ This document defines the 64-bit IEEE-754 NaN-boxed value representation used ac
 
 ---
 
+## Architecture Diagram
+
+![Elysabettian NaN-Boxing Memory Layout](assets/nan_boxing_layout.jpg)
+
+---
+
 ## 1. IEEE-754 Double Precision Architecture
 
 A standard 64-bit floating point number is structured as follows:
