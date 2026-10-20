@@ -54,6 +54,7 @@ rustc --version
 Project specifications and design documentation are located in the [`docs/`](docs/) directory:
 
 - [Bytecode & Opcode Specification](docs/opcodes_specification.md): Detailed instruction set reference, operand encoding, stack transition schemas, and closure capture mechanics.
+- [NaN-Boxing Value Specification](docs/nan_boxing_specification.md): Complete IEEE-754 64-bit layout, bitmasks, pointer packing, type guards, and canonicalization.
 
 ---
 
