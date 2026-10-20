@@ -49,6 +49,14 @@ rustc --version
 
 ---
 
+## Documentation
+
+Project specifications and design documentation are located in the [`docs/`](docs/) directory:
+
+- [Bytecode & Opcode Specification](docs/opcodes_specification.md): Detailed instruction set reference, operand encoding, stack transition schemas, and closure capture mechanics.
+
+---
+
 ## Building & Testing
 
 ### Build the entire workspace
