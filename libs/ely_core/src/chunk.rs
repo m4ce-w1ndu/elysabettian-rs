@@ -91,4 +91,10 @@ impl Chunk {
             }
         }
     }
+
+    /// Returns the total number of bytecode instruction bytes in this chunk.
+    #[inline]
+    pub const fn count(&self) -> usize {
+        self.code.len()
+    }
 }
