@@ -1,0 +1,35 @@
+import('math');
+
+class Point {
+	init(x, y) {
+		this.x = x;
+		this.y = y;
+	}
+
+	getX() { 
+		return this.x;
+	}
+
+	getY() {
+		return this.y;
+	}
+
+	setX(x) {
+		this.x = x;
+	}
+
+	setY(y) {
+		this.y = y;
+	}
+}
+
+func lineLength(p1, p2) {
+	return sqrt(pow(p2.getX() - p1.getX(), 2) + pow(p2.getY() - p1.getY(), 2));
+}
+
+var p1 = Point(2.2, 2.9);
+var p2 = Point(4.2, 3.9);
+
+var length = lineLength(p1, p2);
+
+print "Length of this line is: " + length;

@@ -1,0 +1,31 @@
+class Vector {
+	init() {
+		this.data = [];
+	}
+
+	push(item) {
+		push(this.data, item);
+	}
+
+	get(index) {
+		return this.data[index];
+	}
+
+	pop() {
+		return pop(this.data);
+	}
+
+	size() {
+		return len(this.data);
+	}
+}
+
+var vec = Vector();
+
+for (var i = 0; i < 200; i = i + 1) {
+	vec.push(i);
+}
+
+for (var i = 0; i < 200; i = i + 1) {
+	print vec.get(i);
+}
