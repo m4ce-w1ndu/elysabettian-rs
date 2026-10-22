@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use crate::heap::HeapObject;
 use ely_core::chunk::Chunk;
@@ -15,16 +16,18 @@ pub enum InterpretResult {
 
 pub type NativeFn = fn(arg_count: u8, args: &[Value]) -> Value;
 
+pub const MAX_FRAMES: usize = 64;
+
 /// The virtual machine responsible for executing compiled bytecode chunks.
-pub struct VM<'a> {
+pub struct VM {
     pub stack: Vec<Value>,
-    pub frames: Vec<CallFrame<'a>>,
+    pub frames: Vec<CallFrame>,
     pub globals: HashMap<u32, Value>,
     pub natives: HashMap<u32, NativeFn>,
     pub heap: Vec<HeapObject>,
 }
 
-impl<'a> VM<'a> {
+impl VM {
     /// Creates a new virtual machine instance with preallocated stack and call frames.
     pub fn new() -> Self {
         Self {
@@ -37,9 +40,9 @@ impl<'a> VM<'a> {
     }
 
     /// Interprets a compiled bytecode chunk by initializing the top-level call frame and dispatching.
-    pub fn interpret(&mut self, chunk: &'a Chunk) -> InterpretResult {
+    pub fn interpret(&mut self, chunk: &Chunk) -> InterpretResult {
         self.reset_stack();
-        self.frames.push(CallFrame::new(chunk, 0));
+        self.frames.push(CallFrame::new(Rc::new(chunk.clone()), 0));
         self.run()
     }
 
@@ -47,7 +50,6 @@ impl<'a> VM<'a> {
     pub fn reset_stack(&mut self) {
         self.stack.clear();
         self.frames.clear();
-        self.heap.clear();
     }
 
     /// Pushes a value onto the virtual machine stack.
@@ -114,8 +116,15 @@ impl<'a> VM<'a> {
                 Opcode::Nop => self.push(Value::null()),
                 Opcode::Pop => _ = self.pop(),
                 Opcode::Return => {
-                    self.pop();
-                    return InterpretResult::Ok;
+                    let result = self.pop();
+                    let closing_frame = self.frames.pop().unwrap();
+
+                    if self.frames.is_empty() {
+                        return InterpretResult::Ok;
+                    }
+
+                    self.stack.truncate(closing_frame.slots);
+                    self.push(result);
                 }
                 Opcode::Add => {
                     if !self.binary_op(|a, b| a + b) {
@@ -270,7 +279,22 @@ impl<'a> VM<'a> {
                             self.stack.truncate(args_start - 1);
                             self.push(result);
                         } else {
-                            return InterpretResult::RuntimeError;
+                            match self.get_object(callee) {
+                                Some(HeapObject::Function(func)) => {
+                                    if arg_count != func.arity {
+                                        return InterpretResult::RuntimeError;
+                                    }
+
+                                    if self.frames.len() == MAX_FRAMES {
+                                        return InterpretResult::RuntimeError;
+                                    }
+
+                                    let slots = self.stack.len() - arg_count - 1;
+                                    let chunk = func.chunk.clone();
+                                    self.frames.push(CallFrame::new(chunk, slots));
+                                }
+                                _ => return InterpretResult::RuntimeError,
+                            }
                         }
                     } else {
                         return InterpretResult::RuntimeError;
@@ -350,22 +374,22 @@ impl<'a> VM<'a> {
     }
 }
 
-impl Default for VM<'_> {
+impl Default for VM {
     fn default() -> Self {
         Self::new()
     }
 }
 
 /// A call frame representing an active function or script invocation.
-pub struct CallFrame<'a> {
-    pub chunk: &'a Chunk,
+pub struct CallFrame {
+    pub chunk: Rc<Chunk>,
     pub ip: usize,
     pub slots: usize,
 }
 
-impl<'a> CallFrame<'a> {
+impl CallFrame {
     /// Creates a new call frame starting at offset 0 of the given chunk.
-    pub fn new(chunk: &'a Chunk, slots: usize) -> Self {
+    pub fn new(chunk: Rc<Chunk>, slots: usize) -> Self {
         Self {
             chunk,
             ip: 0,
@@ -422,7 +446,7 @@ mod tests {
         let const_idx = chunk.add_constant(Value::number(99.0));
         chunk.write_byte(const_idx as u8, 1);
 
-        let mut frame = CallFrame::new(&chunk, 0);
+        let mut frame = CallFrame::new(Rc::new(chunk), 0);
 
         assert_eq!(frame.read_short(), 0x1234);
         assert_eq!(frame.read_constant().as_number(), 99.0);
@@ -715,6 +739,45 @@ mod tests {
 
         let mut vm = VM::new();
         let status = vm.interpret(&chunk);
+        assert_eq!(status, InterpretResult::Ok);
+    }
+
+    #[test]
+    fn test_vm_interpret_user_function_call() {
+        // Define a function `double(x)` that returns `x * 2`
+        // In the function's bytecode chunk:
+        // slot 0: callee (double)
+        // slot 1: parameter x
+        let mut func_chunk = Chunk::new();
+        func_chunk.write_byte(Opcode::GetLocal as u8, 1);
+        func_chunk.write_byte(1, 1); // parameter x
+        let c2 = func_chunk.add_constant(Value::number(2.0));
+        func_chunk.write_byte(Opcode::Constant as u8, 1);
+        func_chunk.write_byte(c2 as u8, 1);
+        func_chunk.write_byte(Opcode::Multiply as u8, 1);
+        func_chunk.write_byte(Opcode::Return as u8, 1);
+
+        let mut func = crate::heap::ObjFunction::new(1, Some("double".to_string()));
+        func.chunk = Rc::new(func_chunk);
+
+        let mut vm = VM::new();
+        let func_val = vm.allocate_object(HeapObject::Function(func));
+
+        // In main script:
+        // push func, push 21, Call 1, Return
+        let mut main_chunk = Chunk::new();
+        let c_func = main_chunk.add_constant(func_val);
+        let c_21 = main_chunk.add_constant(Value::number(21.0));
+
+        main_chunk.write_byte(Opcode::Constant as u8, 1);
+        main_chunk.write_byte(c_func as u8, 1);
+        main_chunk.write_byte(Opcode::Constant as u8, 1);
+        main_chunk.write_byte(c_21 as u8, 1);
+        main_chunk.write_byte(Opcode::Call as u8, 1);
+        main_chunk.write_byte(1, 1); // 1 argument
+        main_chunk.write_byte(Opcode::Return as u8, 1);
+
+        let status = vm.interpret(&main_chunk);
         assert_eq!(status, InterpretResult::Ok);
     }
 }
