@@ -1,5 +1,8 @@
 use crate::scanner::Scanner;
 use crate::token::{Token, TokenType};
+use ely_core::chunk::Chunk;
+use ely_core::opcode::Opcode;
+use ely_core::value::Value;
 
 /// Expression precedence levels ordered from lowest to highest for Pratt parsing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -131,5 +134,67 @@ impl<'a> Parser<'a> {
 
         self.advance();
         true
+    }
+}
+
+/// Compiles Elysabettian source code into executable bytecode chunks.
+pub struct Compiler<'a> {
+    parser: Parser<'a>,
+    chunk: Chunk,
+    scope_depth: u32,
+}
+
+impl<'a> Compiler<'a> {
+    /// Creates a new compiler attached to the given parser.
+    pub fn new(parser: Parser<'a>) -> Self {
+        Self {
+            parser,
+            chunk: Chunk::new(),
+            scope_depth: 0,
+        }
+    }
+
+    /// Returns the source line number of the most recently consumed token.
+    #[inline]
+    pub fn current_line(&self) -> u32 {
+        self.parser.previous.line
+    }
+
+    /// Emits a single raw byte into the target chunk.
+    #[inline]
+    pub fn emit_byte(&mut self, byte: u8) {
+        self.chunk.write_byte(byte, self.current_line());
+    }
+
+    /// Emits an opcode instruction into the target chunk.
+    #[inline]
+    pub fn emit_opcode(&mut self, opcode: Opcode) {
+        self.chunk.write_opcode(opcode, self.current_line());
+    }
+
+    /// Emits two consecutive bytes into the target chunk.
+    #[inline]
+    pub fn emit_bytes(&mut self, byte1: u8, byte2: u8) {
+        self.emit_byte(byte1);
+        self.emit_byte(byte2);
+    }
+
+    /// Emits a standard return sequence (pushing null followed by Return).
+    pub fn emit_return(&mut self) {
+        self.emit_opcode(Opcode::Nop);
+        self.emit_opcode(Opcode::Return);
+    }
+
+    /// Adds a value to the constant pool and emits an Opcode::Constant instruction.
+    pub fn emit_constant(&mut self, value: Value) {
+        let index = self.chunk.add_constant(value);
+
+        if index > u8::MAX as usize {
+            self.parser.error("Too many constants in one chunk.");
+            return;
+        }
+
+        self.emit_opcode(Opcode::Constant);
+        self.emit_byte(index as u8);
     }
 }
