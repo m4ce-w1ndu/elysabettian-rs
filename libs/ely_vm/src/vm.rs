@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::heap::HeapObject;
+use crate::heap::{HeapObject, ObjClosure, ObjUpvalue};
 use ely_core::chunk::Chunk;
 use ely_core::opcode::Opcode;
 use ely_core::value::Value;
@@ -25,6 +25,7 @@ pub struct VM {
     pub globals: HashMap<u32, Value>,
     pub natives: HashMap<u32, NativeFn>,
     pub heap: Vec<HeapObject>,
+    pub open_upvalues: Vec<usize>,
 }
 
 impl VM {
@@ -36,6 +37,7 @@ impl VM {
             globals: HashMap::new(),
             natives: HashMap::new(),
             heap: Vec::new(),
+            open_upvalues: Vec::new(),
         }
     }
 
@@ -50,6 +52,7 @@ impl VM {
     pub fn reset_stack(&mut self) {
         self.stack.clear();
         self.frames.clear();
+        self.open_upvalues.clear();
     }
 
     /// Pushes a value onto the virtual machine stack.
@@ -118,6 +121,7 @@ impl VM {
                 Opcode::Return => {
                     let result = self.pop();
                     let closing_frame = self.frames.pop().unwrap();
+                    self.close_upvalue(closing_frame.slots);
 
                     if self.frames.is_empty() {
                         return InterpretResult::Ok;
@@ -247,6 +251,31 @@ impl VM {
                     let value = self.peek(0);
                     self.stack[idx] = value;
                 }
+                Opcode::GetUpvalue => {
+                    let slot = self.frames[frame_idx].read_byte() as usize;
+                    let closure_id = match self.frames[frame_idx].closure_id {
+                        Some(id) => id,
+                        None => return InterpretResult::RuntimeError,
+                    };
+
+                    if let Some(val) = self.get_upvalue_value(closure_id, slot) {
+                        self.push(val);
+                    } else {
+                        return InterpretResult::RuntimeError;
+                    }
+                }
+                Opcode::SetUpvalue => {
+                    let slot = self.frames[frame_idx].read_byte() as usize;
+                    let closure_id = match self.frames[frame_idx].closure_id {
+                        Some(id) => id,
+                        None => return InterpretResult::RuntimeError,
+                    };
+                    let val = self.peek(0);
+
+                    if !self.set_upvalue_value(closure_id, slot, val) {
+                        return InterpretResult::RuntimeError;
+                    }
+                }
                 Opcode::Jump => {
                     let offset = self.frames[frame_idx].read_short();
                     self.frames[frame_idx].ip += offset as usize;
@@ -293,6 +322,25 @@ impl VM {
                                     let chunk = func.chunk.clone();
                                     self.frames.push(CallFrame::new(chunk, slots));
                                 }
+                                Some(HeapObject::Closure(closure)) => {
+                                    let func = match self.heap.get(closure.function_id) {
+                                        Some(HeapObject::Function(f)) => f,
+                                        _ => return InterpretResult::RuntimeError,
+                                    };
+
+                                    if arg_count != func.arity {
+                                        return InterpretResult::RuntimeError;
+                                    }
+
+                                    if self.frames.len() == MAX_FRAMES {
+                                        return InterpretResult::RuntimeError;
+                                    }
+
+                                    let slots = self.stack.len() - arg_count - 1;
+                                    let chunk = func.chunk.clone();
+                                    let closure_id = callee.as_obj() as usize;
+                                    self.frames.push(CallFrame::with_closure(chunk, slots, closure_id));
+                                }
                                 _ => return InterpretResult::RuntimeError,
                             }
                         }
@@ -303,6 +351,45 @@ impl VM {
                 Opcode::Print => {
                     let value = self.pop();
                     println!("{}", value);
+                }
+                Opcode::CloseUpvalue => {
+                    self.close_upvalue(self.stack.len() - 1);
+                    self.pop();
+                }
+                Opcode::Closure => {
+                    let const_val = self.frames[frame_idx].read_constant();
+                    let func_id = const_val.as_obj() as usize;
+
+                    let upvalue_count = match self.heap.get(func_id) {
+                        Some(HeapObject::Function(f)) => f.upvalue_count,
+                        _ => return InterpretResult::RuntimeError,
+                    };
+
+                    let current_slots = self.frames[frame_idx].slots;
+                    let current_closure_id = self.frames[frame_idx].closure_id;
+
+                    let mut closure = crate::heap::ObjClosure::new(func_id);
+
+                    for _ in 0..upvalue_count {
+                        let is_local = self.frames[frame_idx].read_byte();
+                        let index = self.frames[frame_idx].read_byte() as usize;
+
+                        let upvalue_id = if is_local == 1 {
+                            self.capture_upvalue(current_slots + index)
+                        } else {
+                            // Inherits from enclosing closure
+                            let enclosing_id = current_closure_id.expect("No enclosing closure");
+                            match self.heap.get(enclosing_id) {
+                                Some(HeapObject::Closure(c)) => c.upvalues[index],
+                                _ => return InterpretResult::RuntimeError,
+                            }
+                        };
+
+                        closure.upvalues.push(upvalue_id);
+                    }
+
+                    let closure_val = self.allocate_object(HeapObject::Closure(closure));
+                    self.push(closure_val);
                 }
                 Opcode::ArrayBuild => {
                     let count = self.frames[frame_idx].read_byte() as usize;
@@ -372,6 +459,77 @@ impl VM {
         self.push(Value::number(op(a, b)));
         true
     }
+
+    fn capture_upvalue(&mut self, location: usize) -> usize {
+        let existing = self.open_upvalues.iter().copied().find(|&id| {
+            matches!(self.heap.get(id), Some(HeapObject::Upvalue(u)) if u.is_open() && u.location == location)
+        });
+
+        if let Some(id) = existing {
+            return id;
+        }
+
+        let id = self.heap.len();
+        self.heap
+            .push(HeapObject::Upvalue(ObjUpvalue::new(location)));
+        self.open_upvalues.push(id);
+
+        id
+    }
+
+    fn close_upvalue(&mut self, last_slot: usize) {
+        let stack = &self.stack;
+        self.open_upvalues.retain(|&id| {
+            if let Some(HeapObject::Upvalue(upvalue)) = self.heap.get_mut(id) {
+                if upvalue.location >= last_slot {
+                    upvalue.closed = Some(stack[upvalue.location]);
+                    return false;
+                }
+            }
+
+            true
+        })
+    }
+
+    fn get_upvalue_value(&self, closure_id: usize, slot: usize) -> Option<Value> {
+        let upvalue_id = match self.heap.get(closure_id)? {
+            HeapObject::Closure(closure) => *closure.upvalues.get(slot)?,
+            _ => return None,
+        };
+
+        match self.heap.get(upvalue_id)? {
+            HeapObject::Upvalue(u) => {
+                if u.is_open() {
+                    Some(self.stack[u.location])
+                } else {
+                    u.closed
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn set_upvalue_value(&mut self, closure_id: usize, slot: usize, value: Value) -> bool {
+        let upvalue_id = match self.heap.get(closure_id) {
+            Some(HeapObject::Closure(closure)) => match closure.upvalues.get(slot) {
+                Some(&id) => id,
+                None => return false,
+            },
+            _ => return false,
+        };
+
+        match self.heap.get_mut(upvalue_id) {
+            Some(HeapObject::Upvalue(u)) => {
+                if u.is_open() {
+                    self.stack[u.location] = value;
+                } else {
+                    u.closed = Some(value);
+                }
+                true
+            }
+            _ => false,
+        }
+    }
 }
 
 impl Default for VM {
@@ -385,6 +543,7 @@ pub struct CallFrame {
     pub chunk: Rc<Chunk>,
     pub ip: usize,
     pub slots: usize,
+    pub closure_id: Option<usize>,
 }
 
 impl CallFrame {
@@ -394,6 +553,16 @@ impl CallFrame {
             chunk,
             ip: 0,
             slots,
+            closure_id: None,
+        }
+    }
+
+    pub fn with_closure(chunk: Rc<Chunk>, slots: usize, closure_id: usize) -> Self {
+        Self {
+            chunk,
+            ip: 0,
+            slots,
+            closure_id: Some(closure_id),
         }
     }
 
@@ -775,6 +944,54 @@ mod tests {
         main_chunk.write_byte(c_21 as u8, 1);
         main_chunk.write_byte(Opcode::Call as u8, 1);
         main_chunk.write_byte(1, 1); // 1 argument
+        main_chunk.write_byte(Opcode::Return as u8, 1);
+
+        let status = vm.interpret(&main_chunk);
+        assert_eq!(status, InterpretResult::Ok);
+    }
+
+    #[test]
+    fn test_vm_interpret_closure_and_upvalues() {
+        // Outer function that creates a closure capturing a local variable
+        // var x = 10;
+        // closure returns x + 5;
+        let mut inner_chunk = Chunk::new();
+        // Get upvalue 0 (which captures x)
+        inner_chunk.write_byte(Opcode::GetUpvalue as u8, 1);
+        inner_chunk.write_byte(0, 1);
+        let c5 = inner_chunk.add_constant(Value::number(5.0));
+        inner_chunk.write_byte(Opcode::Constant as u8, 1);
+        inner_chunk.write_byte(c5 as u8, 1);
+        inner_chunk.write_byte(Opcode::Add as u8, 1);
+        inner_chunk.write_byte(Opcode::Return as u8, 1);
+
+        let mut inner_func = crate::heap::ObjFunction::new(0, Some("inner".to_string()));
+        inner_func.upvalue_count = 1;
+        inner_func.chunk = Rc::new(inner_chunk);
+
+        let mut vm = VM::new();
+        let inner_func_val = vm.allocate_object(HeapObject::Function(inner_func));
+
+        let mut main_chunk = Chunk::new();
+        let c10 = main_chunk.add_constant(Value::number(10.0));
+        let c_inner = main_chunk.add_constant(inner_func_val);
+
+        // slot 0 is local x = 10
+        main_chunk.write_byte(Opcode::Constant as u8, 1);
+        main_chunk.write_byte(c10 as u8, 1);
+
+        // Opcode::Closure for inner_func:
+        main_chunk.write_byte(Opcode::Closure as u8, 1);
+        main_chunk.write_byte(c_inner as u8, 1);
+        // captures local slot 0 (is_local = 1, index = 0)
+        main_chunk.write_byte(1, 1);
+        main_chunk.write_byte(0, 1);
+
+        // Call closure with 0 args
+        main_chunk.write_byte(Opcode::Call as u8, 1);
+        main_chunk.write_byte(0, 1);
+
+        // Return result
         main_chunk.write_byte(Opcode::Return as u8, 1);
 
         let status = vm.interpret(&main_chunk);
