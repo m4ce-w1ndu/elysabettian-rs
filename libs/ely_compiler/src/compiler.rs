@@ -30,6 +30,12 @@ pub struct LocalVar<'a> {
     pub is_capture: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FunctionType {
+    Script,
+    Function,
+}
+
 impl Precedence {
     /// Returns the immediate higher precedence level.
     #[inline]
@@ -149,18 +155,32 @@ pub struct Compiler<'a> {
     interner: &'a mut StringInterner,
     locals: Vec<LocalVar<'a>>,
     scope_depth: u32,
+    pub function_type: FunctionType,
 }
 
 impl<'a> Compiler<'a> {
     /// Creates a new compiler attached to the given parser.
     pub fn new(parser: Parser<'a>, interner: &'a mut StringInterner) -> Self {
-        Self {
+        let mut compiler = Self {
             parser,
             chunk: Chunk::new(),
             interner,
             locals: Vec::new(),
             scope_depth: 0,
-        }
+            function_type: FunctionType::Script,
+        };
+
+        compiler.locals.push(LocalVar {
+            name: Token {
+                token_type: TokenType::Identifier,
+                lexeme: "",
+                line: 0,
+            },
+            depth: 0,
+            is_capture: false,
+        });
+
+        compiler
     }
 
     /// Returns the source line number of the most recently consumed token.
@@ -362,6 +382,8 @@ impl<'a> Compiler<'a> {
             self.while_statement();
         } else if self.parser.match_token(TokenType::For) {
             self.for_statement();
+        } else if self.parser.match_token(TokenType::Return) {
+            self.return_statement();
         } else {
             self.expression_statement();
         }
@@ -389,7 +411,9 @@ impl<'a> Compiler<'a> {
             return;
         }
 
-        if self.parser.match_token(TokenType::Var) {
+        if self.parser.match_token(TokenType::Func) {
+            self.func_declaration();
+        } else if self.parser.match_token(TokenType::Var) {
             self.var_declaration();
         } else {
             self.statement();
@@ -519,7 +543,7 @@ impl<'a> Compiler<'a> {
         self.scope_depth -= 1;
 
         while self.locals.last().is_some()
-            && self.locals.last().unwrap().depth >= self.scope_depth as i32
+            && self.locals.last().unwrap().depth > self.scope_depth as i32
         {
             self.locals.pop();
             self.emit_opcode(Opcode::Pop);
@@ -794,6 +818,74 @@ impl<'a> Compiler<'a> {
         let arg_count = self.argument_list();
         self.emit_opcode(Opcode::Call);
         self.emit_byte(arg_count);
+    }
+
+    fn function(&mut self) -> usize {
+        self.begin_scope();
+        self.parser
+            .consume(TokenType::OpenParen, "Expected '(' after function name.");
+
+        let mut arity: usize = 0;
+        if !self.parser.check(TokenType::CloseParen) {
+            loop {
+                arity += 1;
+                if arity > 255 {
+                    self.parser.error("Cannot have more than 255 parameters.");
+                    return arity;
+                }
+
+                let constant = self.parse_variable("Expected parameter name.");
+                self.define_variable(constant);
+
+                if !self.parser.match_token(TokenType::Comma) {
+                    break;
+                }
+            }
+        }
+
+        self.parser.consume(
+            TokenType::CloseParen,
+            "Expected ')' after function parameters.",
+        );
+        self.parser.consume(
+            TokenType::OpenCurly,
+            "Expected '{' after function signature.",
+        );
+
+        self.block();
+        self.emit_return();
+
+        arity
+    }
+
+    /// Compiles a function declaration, parsing signature and body.
+    fn func_declaration(&mut self) {
+        let global = self.parse_variable("Expected function name for signature.");
+        if self.scope_depth > 0 {
+            self.mark_initialized();
+        }
+
+        _ = self.function();
+
+        self.define_variable(global);
+    }
+
+    /// Compiles a `return` statement, checking that it occurs inside a function body.
+    fn return_statement(&mut self) {
+        if self.function_type == FunctionType::Script {
+            self.parser.error("Cannot return from top-level code.");
+            return;
+        }
+
+        if self.parser.match_token(TokenType::Semicolon) {
+            self.emit_return();
+            return;
+        }
+
+        self.expression();
+        self.parser
+            .consume(TokenType::Semicolon, "Expected ';' after return value.");
+        self.emit_opcode(Opcode::Return);
     }
 }
 
@@ -1070,8 +1162,8 @@ mod tests {
             // body
             Opcode::GetLocal,
             Opcode::Print,
-            Opcode::Pop,
             Opcode::Loop,
+            Opcode::Pop,
             Opcode::Pop,
             Opcode::Nop,
             Opcode::Return,
@@ -1120,15 +1212,45 @@ mod tests {
             Opcode::Constant,  // 2
             Opcode::Constant,  // 3
             Opcode::Add,
-            Opcode::Call,      // argc = 2
-            Opcode::Pop,       // statement pop
+            Opcode::Call, // argc = 2
+            Opcode::Pop,  // statement pop
             Opcode::Nop,
             Opcode::Return,
         ];
 
         assert_eq!(extract_opcodes(&chunk), expected_opcodes);
         // check argc operand of Opcode::Call
-        let call_idx = chunk.code.iter().position(|&b| b == Opcode::Call as u8).unwrap();
+        let call_idx = chunk
+            .code
+            .iter()
+            .position(|&b| b == Opcode::Call as u8)
+            .unwrap();
         assert_eq!(chunk.code[call_idx + 1], 2);
+    }
+
+    #[test]
+    fn test_compile_func_declaration() {
+        let mut interner = StringInterner::new();
+        let source = r#"
+            func add(a, b) {
+                print a + b;
+            }
+        "#;
+        let chunk = compile(source, &mut interner).expect("Compilation failed.");
+
+        ely_core::debug::disassemble_chunk(&chunk, "test_func_declaration");
+
+        let expected_opcodes = vec![
+            Opcode::GetLocal, // a (slot 1)
+            Opcode::GetLocal, // b (slot 2)
+            Opcode::Add,
+            Opcode::Print,
+            Opcode::Nop,    // implicit return null of function
+            Opcode::Return,
+            Opcode::Nop,    // implicit return null of script
+            Opcode::Return,
+        ];
+
+        assert_eq!(extract_opcodes(&chunk), expected_opcodes);
     }
 }
