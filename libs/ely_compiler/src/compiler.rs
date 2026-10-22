@@ -202,7 +202,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn expression(&mut self) {
-        todo!();
+        self.parse_precedence(Precedence::Assignment);
     }
 
     fn number(&mut self) {
@@ -285,8 +285,26 @@ impl<'a> Compiler<'a> {
         self.emit_constant(Value::obj(string_id as u64));
     }
 
+    /// Parses an expression with precedence equal to or greater than the specified level.
     fn parse_precedence(&mut self, precedence: Precedence) {
-        todo!();
+        self.parser.advance();
+
+        match self.parser.previous.token_type {
+            TokenType::OpenParen => self.grouping(),
+            TokenType::Minus | TokenType::Negate | TokenType::BwNot => self.unary(),
+            TokenType::Number => self.number(),
+            TokenType::String => self.string(),
+            TokenType::False | TokenType::True | TokenType::Null => self.literal(),
+            _ => {
+                self.parser.error("Expected expression.");
+                return;
+            }
+        }
+
+        while precedence <= Self::get_precedence(self.parser.current.token_type) {
+            self.parser.advance();
+            self.binary();
+        }
     }
 
     /// Resolves the infix precedence level associated with a token type.
