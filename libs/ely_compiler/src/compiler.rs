@@ -1,6 +1,7 @@
 use crate::scanner::Scanner;
 use crate::token::{Token, TokenType};
 use ely_core::chunk::Chunk;
+use ely_core::interner::StringInterner;
 use ely_core::opcode::Opcode;
 use ely_core::value::Value;
 
@@ -141,15 +142,17 @@ impl<'a> Parser<'a> {
 pub struct Compiler<'a> {
     parser: Parser<'a>,
     chunk: Chunk,
+    interner: &'a mut StringInterner,
     scope_depth: u32,
 }
 
 impl<'a> Compiler<'a> {
     /// Creates a new compiler attached to the given parser.
-    pub fn new(parser: Parser<'a>) -> Self {
+    pub fn new(parser: Parser<'a>, interner: &'a mut StringInterner) -> Self {
         Self {
             parser,
             chunk: Chunk::new(),
+            interner,
             scope_depth: 0,
         }
     }
@@ -261,6 +264,25 @@ impl<'a> Compiler<'a> {
             TokenType::ShiftRight => self.emit_opcode(Opcode::ShiftRight),
             _ => (),
         }
+    }
+
+    /// Parses a literal keyword expression (`true`, `false`, `null`).
+    fn literal(&mut self) {
+        match self.parser.previous.token_type {
+            TokenType::True => self.emit_opcode(Opcode::True),
+            TokenType::False => self.emit_opcode(Opcode::False),
+            TokenType::Null => self.emit_opcode(Opcode::Nop),
+            _ => (),
+        }
+    }
+
+    /// Parses a string literal, interns it into the string pool, and emits a constant object reference.
+    fn string(&mut self) {
+        let lexeme = self.parser.previous.lexeme;
+        let value = &lexeme[1..lexeme.len() - 1];
+        let string_id = self.interner.intern(value);
+
+        self.emit_constant(Value::obj(string_id as u64));
     }
 
     fn parse_precedence(&mut self, precedence: Precedence) {
