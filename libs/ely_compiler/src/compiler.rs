@@ -501,14 +501,89 @@ pub fn compile(source: &str, interner: &mut StringInterner) -> Option<Chunk> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ely_core::debug::disassemble_chunk;
+
+    /// Helper to decode only the sequential stream of opcodes from a compiled chunk.
+    fn extract_opcodes(chunk: &Chunk) -> Vec<Opcode> {
+        let mut opcodes = Vec::new();
+        let mut offset = 0;
+        while offset < chunk.count() {
+            let op = Opcode::try_from(chunk.code[offset]).expect("Invalid opcode byte.");
+            opcodes.push(op);
+
+            offset += match op {
+                Opcode::Constant
+                | Opcode::DefineGlobal
+                | Opcode::GetGlobal
+                | Opcode::SetGlobal
+                | Opcode::GetLocal
+                | Opcode::SetLocal
+                | Opcode::Call
+                | Opcode::Class
+                | Opcode::Method
+                | Opcode::GetProperty
+                | Opcode::SetProperty
+                | Opcode::GetSuper
+                | Opcode::ArrayBuild => 2,
+                Opcode::Jump | Opcode::JumpIfFalse | Opcode::Loop | Opcode::Invoke | Opcode::SuperInvoke => 3,
+                _ => 1,
+            };
+        }
+        opcodes
+    }
 
     #[test]
     fn test_compile_math_expression() {
         let mut interner = StringInterner::new();
         let chunk = compile("1 + 2 * 3;", &mut interner).expect("Compilation failed.");
 
-        disassemble_chunk(&chunk, "test_math");
+        let expected_opcodes = vec![
+            Opcode::Constant, // 1
+            Opcode::Constant, // 2
+            Opcode::Constant, // 3
+            Opcode::Multiply, // 2 * 3
+            Opcode::Add,      // 1 + (2 * 3)
+            Opcode::Pop,      // expression statement pop
+            Opcode::Nop,      // implicit return null
+            Opcode::Return,
+        ];
+
+        assert_eq!(extract_opcodes(&chunk), expected_opcodes);
         assert_eq!(chunk.constants.len(), 3);
+        assert_eq!(chunk.constants[0].as_number(), 1.0);
+        assert_eq!(chunk.constants[1].as_number(), 2.0);
+        assert_eq!(chunk.constants[2].as_number(), 3.0);
+    }
+
+    #[test]
+    fn test_compile_variables() {
+        let mut interner = StringInterner::new();
+        let source = "var x = 10; print x + 5; x = 20;";
+        let chunk = compile(source, &mut interner).expect("Compilation failed.");
+
+        // Check "x" variable interning
+        let x_id = interner.intern("x");
+        assert_eq!(interner.get(x_id), Some("x"));
+
+        // List of expected opcodes
+        let expected_opcodes = vec![
+            Opcode::Constant,     // 10
+            Opcode::DefineGlobal, // 'x'
+            Opcode::GetGlobal,    // 'x'
+            Opcode::Constant,     // 5
+            Opcode::Add,          // +
+            Opcode::Print,        // print
+            Opcode::Constant,     // 20
+            Opcode::SetGlobal,    // 'x'
+            Opcode::Pop,          // expression statement
+            Opcode::Nop,          // implicit return null
+            Opcode::Return,       // return
+        ];
+
+        assert_eq!(extract_opcodes(&chunk), expected_opcodes);
+
+        // Check numeric values
+        assert!(chunk.constants.iter().any(|c| c.is_number() && c.as_number() == 10.0));
+        assert!(chunk.constants.iter().any(|c| c.is_number() && c.as_number() == 5.0));
+        assert!(chunk.constants.iter().any(|c| c.is_number() && c.as_number() == 20.0));
     }
 }
