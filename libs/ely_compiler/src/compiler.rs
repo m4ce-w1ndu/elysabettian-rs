@@ -2,7 +2,7 @@ use crate::scanner::Scanner;
 use crate::token::{Token, TokenType};
 use ely_core::chunk::Chunk;
 use ely_core::interner::StringInterner;
-use ely_core::opcode::Opcode;
+use ely_core::opcode::Opcode::{self, SetGlobal};
 use ely_core::value::Value;
 
 /// Expression precedence levels ordered from lowest to highest for Pratt parsing.
@@ -295,12 +295,14 @@ impl<'a> Compiler<'a> {
     fn parse_precedence(&mut self, precedence: Precedence) {
         self.parser.advance();
 
+        let can_assign = precedence <= Precedence::Assignment;
         match self.parser.previous.token_type {
             TokenType::OpenParen => self.grouping(),
             TokenType::Minus | TokenType::Negate | TokenType::BwNot => self.unary(),
             TokenType::Number => self.number(),
             TokenType::String => self.string(),
             TokenType::False | TokenType::True | TokenType::Null => self.literal(),
+            TokenType::Identifier => self.variable(can_assign),
             _ => {
                 self.parser.error("Expected expression.");
                 return;
@@ -310,6 +312,10 @@ impl<'a> Compiler<'a> {
         while precedence <= Self::get_precedence(self.parser.current.token_type) {
             self.parser.advance();
             self.binary();
+        }
+
+        if can_assign && self.parser.match_token(TokenType::Assign) {
+            self.parser.error("Invalid assignment target.");
         }
     }
 
@@ -445,6 +451,26 @@ impl<'a> Compiler<'a> {
         );
 
         self.define_variable(global);
+    }
+
+    /// Emits bytecode to resolve or assign a named identifier.
+    fn named_variable(&mut self, name: Token<'a>, can_assign: bool) {
+        let arg = self.identifier_constant(name);
+
+        if can_assign && self.parser.match_token(TokenType::Assign) {
+            self.expression();
+            self.emit_opcode(SetGlobal);
+            self.emit_byte(arg);
+        } else {
+            self.emit_opcode(Opcode::GetGlobal);
+            self.emit_byte(arg);
+        }
+    }
+
+    /// Parses a variable evaluation or assignment expression.
+    fn variable(&mut self, can_assign: bool) {
+        let name = self.parser.previous;
+        self.named_variable(name, can_assign)
     }
 }
 
