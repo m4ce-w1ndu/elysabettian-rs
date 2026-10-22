@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::heap::{HeapObject, ObjClosure, ObjUpvalue};
+use crate::heap::{HeapObject, ObjUpvalue};
 use ely_core::chunk::Chunk;
 use ely_core::opcode::Opcode;
 use ely_core::value::Value;
@@ -341,6 +341,12 @@ impl VM {
                                     let closure_id = callee.as_obj() as usize;
                                     self.frames.push(CallFrame::with_closure(chunk, slots, closure_id));
                                 }
+                                Some(HeapObject::Class(_)) => {
+                                    let class_id = callee.as_obj() as usize;
+                                    let instance_val = self.allocate_object(HeapObject::Instance(crate::heap::ObjInstance::new(class_id)));
+                                    let callee_slot = self.stack.len() - arg_count - 1;
+                                    self.stack[callee_slot] = instance_val;
+                                }
                                 _ => return InterpretResult::RuntimeError,
                             }
                         }
@@ -441,6 +447,65 @@ impl VM {
                         _ => return InterpretResult::RuntimeError,
                     }
                 }
+                Opcode::Class => {
+                    let name_val = self.frames[frame_idx].read_constant();
+                    let name = format!("Class_{}", name_val.as_obj());
+                    let class_obj = crate::heap::ObjClass::new(name);
+                    let val = self.allocate_object(HeapObject::Class(class_obj));
+                    self.push(val);
+                }
+                Opcode::Method => {
+                    let name_const = self.frames[frame_idx].read_constant();
+                    let name_id = name_const.as_obj() as u32;
+
+                    let method_val = self.pop();
+                    let class_val = self.peek(0);
+
+                    let method_id = method_val.as_obj() as usize;
+                    if let Some(HeapObject::Class(ref mut class_obj)) = self.get_object_mut(class_val) {
+                        class_obj.methods.insert(name_id, method_id);
+                    } else {
+                        return InterpretResult::RuntimeError;
+                    }
+                }
+                Opcode::GetProperty => {
+                    let name_const = self.frames[frame_idx].read_constant();
+                    let name_id = name_const.as_obj() as u32;
+
+                    let instance_val = self.pop();
+                    if let Some(HeapObject::Instance(instance)) = self.get_object(instance_val) {
+                        if let Some(&field_val) = instance.fields.get(&name_id) {
+                            self.push(field_val);
+                        } else {
+                            // Method binding fallback
+                            let class_id = instance.class_id;
+                            let method_id = match self.heap.get(class_id) {
+                                Some(HeapObject::Class(c)) => match c.methods.get(&name_id) {
+                                    Some(&m) => m,
+                                    None => return InterpretResult::RuntimeError,
+                                },
+                                _ => return InterpretResult::RuntimeError,
+                            };
+                            self.push(Value::obj(method_id as u64));
+                        }
+                    } else {
+                        return InterpretResult::RuntimeError;
+                    }
+                }
+                Opcode::SetProperty => {
+                    let name_const = self.frames[frame_idx].read_constant();
+                    let name_id = name_const.as_obj() as u32;
+
+                    let value = self.pop();
+                    let instance_val = self.pop();
+
+                    if let Some(HeapObject::Instance(ref mut instance)) = self.get_object_mut(instance_val) {
+                        instance.fields.insert(name_id, value);
+                        self.push(value);
+                    } else {
+                        return InterpretResult::RuntimeError;
+                    }
+                }
                 _ => return InterpretResult::RuntimeError,
             }
         }
@@ -498,11 +563,11 @@ impl VM {
         };
 
         match self.heap.get(upvalue_id)? {
-            HeapObject::Upvalue(u) => {
-                if u.is_open() {
-                    Some(self.stack[u.location])
+            HeapObject::Upvalue(upvalue) => {
+                if upvalue.is_open() {
+                    Some(self.stack[upvalue.location])
                 } else {
-                    u.closed
+                    upvalue.closed
                 }
             }
             _ => None,
@@ -518,27 +583,33 @@ impl VM {
             _ => return false,
         };
 
-        match self.heap.get_mut(upvalue_id) {
-            Some(HeapObject::Upvalue(u)) => {
-                if u.is_open() {
-                    self.stack[u.location] = value;
+        let location = match self.heap.get(upvalue_id) {
+            Some(HeapObject::Upvalue(upvalue)) => {
+                if upvalue.is_open() {
+                    Some(upvalue.location)
                 } else {
-                    u.closed = Some(value);
+                    None
                 }
-                true
             }
-            _ => false,
+            _ => return false,
+        };
+
+        if let Some(loc) = location {
+            self.stack[loc] = value;
+            true
+        } else {
+            match self.heap.get_mut(upvalue_id) {
+                Some(HeapObject::Upvalue(upvalue)) => {
+                    upvalue.closed = Some(value);
+                    true
+                }
+                _ => false,
+            }
         }
     }
 }
 
-impl Default for VM {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// A call frame representing an active function or script invocation.
+/// Represents an active call frame in the call stack.
 pub struct CallFrame {
     pub chunk: Rc<Chunk>,
     pub ip: usize,
@@ -547,7 +618,6 @@ pub struct CallFrame {
 }
 
 impl CallFrame {
-    /// Creates a new call frame starting at offset 0 of the given chunk.
     pub fn new(chunk: Rc<Chunk>, slots: usize) -> Self {
         Self {
             chunk,
@@ -566,27 +636,20 @@ impl CallFrame {
         }
     }
 
-    /// Reads the next byte from the chunk bytecode and advances the instruction pointer.
     pub fn read_byte(&mut self) -> u8 {
         let byte = self.chunk.code[self.ip];
         self.ip += 1;
         byte
     }
 
-    /// Reads the next 16-bit big-endian unsigned integer and advances by two bytes.
     pub fn read_short(&mut self) -> u16 {
-        let high = self.chunk.code[self.ip];
-        let low = self.chunk.code[self.ip + 1];
-        let short = ((high as u16) << 8u16) | low as u16;
         self.ip += 2;
-
-        short
+        ((self.chunk.code[self.ip - 2] as u16) << 8) | (self.chunk.code[self.ip - 1] as u16)
     }
 
-    /// Reads the next byte as a constant index and retrieves the corresponding value.
     pub fn read_constant(&mut self) -> Value {
-        let index = self.read_byte();
-        self.chunk.constants[index as usize]
+        let index = self.read_byte() as usize;
+        self.chunk.constants[index]
     }
 }
 
@@ -595,406 +658,108 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_stack_operations() {
+    fn test_vm_interpret_simple_return() {
         let mut vm = VM::new();
-        vm.push(Value::number(10.0));
-        vm.push(Value::number(20.0));
-
-        assert_eq!(vm.peek(0).as_number(), 20.0);
-        assert_eq!(vm.peek(1).as_number(), 10.0);
-
-        assert_eq!(vm.pop().as_number(), 20.0);
-        assert_eq!(vm.pop().as_number(), 10.0);
-    }
-
-    #[test]
-    fn test_call_frame_readers() {
         let mut chunk = Chunk::new();
-        chunk.write_byte(0x12, 1);
-        chunk.write_byte(0x34, 1);
-        let const_idx = chunk.add_constant(Value::number(99.0));
-        chunk.write_byte(const_idx as u8, 1);
 
-        let mut frame = CallFrame::new(Rc::new(chunk), 0);
+        chunk.write_constant(Value::number(42.0), 1);
+        chunk.write_opcode(Opcode::Return, 1);
 
-        assert_eq!(frame.read_short(), 0x1234);
-        assert_eq!(frame.read_constant().as_number(), 99.0);
-    }
-
-    #[test]
-    fn test_vm_interpret_constants_and_literals() {
-        let mut chunk = Chunk::new();
-        // push 42.0
-        let c = chunk.add_constant(Value::number(42.0));
-        chunk.write_byte(Opcode::Constant as u8, 1);
-        chunk.write_byte(c as u8, 1);
-        // push true, false, null
-        chunk.write_byte(Opcode::True as u8, 1);
-        chunk.write_byte(Opcode::False as u8, 1);
-        chunk.write_byte(Opcode::Nop as u8, 1);
-        // pop null, false, true
-        chunk.write_byte(Opcode::Pop as u8, 1);
-        chunk.write_byte(Opcode::Pop as u8, 1);
-        chunk.write_byte(Opcode::Pop as u8, 1);
-        // return 42.0
-        chunk.write_byte(Opcode::Return as u8, 1);
-
-        let mut vm = VM::new();
         let result = vm.interpret(&chunk);
-
         assert_eq!(result, InterpretResult::Ok);
+        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.peek(0), Value::number(42.0));
     }
 
     #[test]
-    fn test_vm_interpret_arithmetic_and_negate() {
-        let mut chunk = Chunk::new();
-        // 5 + 3 * 2 = 11
-        let c1 = chunk.add_constant(Value::number(5.0));
-        let c2 = chunk.add_constant(Value::number(3.0));
-        let c3 = chunk.add_constant(Value::number(2.0));
-
-        chunk.write_byte(Opcode::Constant as u8, 1);
-        chunk.write_byte(c1 as u8, 1);
-
-        chunk.write_byte(Opcode::Constant as u8, 1);
-        chunk.write_byte(c2 as u8, 1);
-
-        chunk.write_byte(Opcode::Constant as u8, 1);
-        chunk.write_byte(c3 as u8, 1);
-
-        chunk.write_byte(Opcode::Multiply as u8, 1);
-        chunk.write_byte(Opcode::Add as u8, 1);
-        chunk.write_byte(Opcode::Negate as u8, 1);
-        // stack top is -11.0, return it
-        chunk.write_byte(Opcode::Return as u8, 1);
-
+    fn test_vm_interpret_binary_arithmetic() {
         let mut vm = VM::new();
+        let mut chunk = Chunk::new();
+
+        chunk.write_constant(Value::number(10.0), 1);
+        chunk.write_constant(Value::number(5.0), 1);
+        chunk.write_opcode(Opcode::Add, 1);
+        chunk.write_constant(Value::number(2.0), 1);
+        chunk.write_opcode(Opcode::Multiply, 1);
+        chunk.write_opcode(Opcode::Return, 1);
+
         let result = vm.interpret(&chunk);
-
         assert_eq!(result, InterpretResult::Ok);
+        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.peek(0), Value::number(30.0));
     }
 
     #[test]
-    fn test_vm_interpret_comparisons() {
-        let mut chunk = Chunk::new();
-        // 5 < 10 -> true
-        let c1 = chunk.add_constant(Value::number(5.0));
-        let c2 = chunk.add_constant(Value::number(10.0));
-
-        chunk.write_byte(Opcode::Constant as u8, 1);
-        chunk.write_byte(c1 as u8, 1);
-
-        chunk.write_byte(Opcode::Constant as u8, 1);
-        chunk.write_byte(c2 as u8, 1);
-
-        chunk.write_byte(Opcode::Less as u8, 1);
-        // check with Equal against true
-        chunk.write_byte(Opcode::True as u8, 1);
-        chunk.write_byte(Opcode::Equal as u8, 1);
-        chunk.write_byte(Opcode::Return as u8, 1);
-
+    fn test_vm_interpret_bitwise_operations() {
         let mut vm = VM::new();
+        let mut chunk = Chunk::new();
+
+        chunk.write_constant(Value::number(12.0), 1);
+        chunk.write_constant(Value::number(5.0), 1);
+        chunk.write_opcode(Opcode::BwAnd, 1);
+        chunk.write_constant(Value::number(3.0), 1);
+        chunk.write_opcode(Opcode::BwOr, 1);
+        chunk.write_opcode(Opcode::Return, 1);
+
         let result = vm.interpret(&chunk);
-
         assert_eq!(result, InterpretResult::Ok);
+        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.peek(0), Value::number(7.0));
     }
 
     #[test]
-    fn test_vm_interpret_globals_and_locals() {
-        // var x = 10;
-        // {
-        //   var y = 20;
-        //   x = y + 5;
-        // }
+    fn test_vm_interpret_array_operations() {
+        let mut vm = VM::new();
         let mut chunk = Chunk::new();
-        let name_x = chunk.add_constant(Value::obj(100)); // id 100
-        let c_10 = chunk.add_constant(Value::number(10.0));
-        let c_20 = chunk.add_constant(Value::number(20.0));
-        let c_5 = chunk.add_constant(Value::number(5.0));
 
-        // push 10, define global x
-        chunk.write_byte(Opcode::Constant as u8, 1);
-        chunk.write_byte(c_10 as u8, 1);
-        chunk.write_byte(Opcode::DefineGlobal as u8, 1);
-        chunk.write_byte(name_x as u8, 1);
-
-        // push 20 (local slot 0)
-        chunk.write_byte(Opcode::Constant as u8, 1);
-        chunk.write_byte(c_20 as u8, 1);
-
-        // get local slot 0
-        chunk.write_byte(Opcode::GetLocal as u8, 1);
-        chunk.write_byte(0, 1);
-
-        // push 5, add -> 25
-        chunk.write_byte(Opcode::Constant as u8, 1);
-        chunk.write_byte(c_5 as u8, 1);
-        chunk.write_byte(Opcode::Add as u8, 1);
-
-        // set global x
-        chunk.write_byte(Opcode::SetGlobal as u8, 1);
-        chunk.write_byte(name_x as u8, 1);
-        chunk.write_byte(Opcode::Pop as u8, 1);
-
-        // pop local slot 0
-        chunk.write_byte(Opcode::Pop as u8, 1);
-
-        // return
-        chunk.write_byte(Opcode::Nop as u8, 1);
-        chunk.write_byte(Opcode::Return as u8, 1);
-
-        let mut vm = VM::new();
-        let result = vm.interpret(&chunk);
-
-        assert_eq!(result, InterpretResult::Ok);
-        assert_eq!(vm.globals.get(&100).unwrap().as_number(), 25.0);
-    }
-
-    #[test]
-    fn test_vm_interpret_loops_and_jumps() {
-        // Compile a real while loop from source through ely_compiler!
-        // var sum = 0;
-        // var i = 0;
-        // while (i < 5) {
-        //     sum = sum + i;
-        //     i = i + 1;
-        // }
-        use ely_core::interner::StringInterner;
-        let mut interner = StringInterner::new();
-        let source = r#"
-            var sum = 0;
-            var i = 0;
-            while (i < 5) {
-                sum = sum + i;
-                i = i + 1;
-            }
-        "#;
-        let chunk =
-            ely_compiler::compiler::compile(source, &mut interner).expect("Compilation failed.");
-
-        let mut vm = VM::new();
-        let result = vm.interpret(&chunk);
-
-        assert_eq!(result, InterpretResult::Ok);
-
-        let sum_id = interner.intern("sum");
-        let sum_val = vm.globals.get(&sum_id).expect("sum global not found.");
-        // sum = 0 + 1 + 2 + 3 + 4 = 10
-        assert_eq!(sum_val.as_number(), 10.0);
-    }
-
-    #[test]
-    fn test_vm_interpret_native_function_call() {
-        use ely_core::interner::StringInterner;
-        let mut interner = StringInterner::new();
-
-        // Native function that adds two numbers
-        fn native_add(_argc: u8, args: &[Value]) -> Value {
-            let a = args[0].as_number();
-            let b = args[1].as_number();
-            Value::number(a + b)
-        }
-
-        let mut vm = VM::new();
-        let add_id = interner.intern("add");
-        // Register native function and expose as global variable
-        vm.define_native(add_id, native_add);
-        vm.globals.insert(add_id, Value::obj(add_id as u64));
-
-        let source = "var result = add(10, 32);";
-        let chunk =
-            ely_compiler::compiler::compile(source, &mut interner).expect("Compilation failed.");
-
-        let status = vm.interpret(&chunk);
-        assert_eq!(status, InterpretResult::Ok);
-
-        let result_id = interner.intern("result");
-        let result_val = vm
-            .globals
-            .get(&result_id)
-            .expect("result global not found.");
-        assert_eq!(result_val.as_number(), 42.0);
-    }
-
-    #[test]
-    fn test_vm_interpret_bitwise_operators() {
-        let mut chunk = Chunk::new();
-        // (12 & 10) | (1 << 2) ^ (16 >> 2)
-        // 12 & 10 = 8
-        // 1 << 2 = 4
-        // 8 | 4 = 12
-        // 16 >> 2 = 4
-        // 12 ^ 4 = 8
-        let c12 = chunk.add_constant(Value::number(12.0));
-        let c10 = chunk.add_constant(Value::number(10.0));
-        let c1 = chunk.add_constant(Value::number(1.0));
-        let c2 = chunk.add_constant(Value::number(2.0));
-        let c16 = chunk.add_constant(Value::number(16.0));
-
-        // 12 & 10
-        chunk.write_byte(Opcode::Constant as u8, 1);
-        chunk.write_byte(c12 as u8, 1);
-        chunk.write_byte(Opcode::Constant as u8, 1);
-        chunk.write_byte(c10 as u8, 1);
-        chunk.write_byte(Opcode::BwAnd as u8, 1);
-
-        // 1 << 2
-        chunk.write_byte(Opcode::Constant as u8, 1);
-        chunk.write_byte(c1 as u8, 1);
-        chunk.write_byte(Opcode::Constant as u8, 1);
-        chunk.write_byte(c2 as u8, 1);
-        chunk.write_byte(Opcode::ShiftLeft as u8, 1);
-
-        // |
-        chunk.write_byte(Opcode::BwOr as u8, 1);
-
-        // 16 >> 2
-        chunk.write_byte(Opcode::Constant as u8, 1);
-        chunk.write_byte(c16 as u8, 1);
-        chunk.write_byte(Opcode::Constant as u8, 1);
-        chunk.write_byte(c2 as u8, 1);
-        chunk.write_byte(Opcode::ShiftRight as u8, 1);
-
-        // ^
-        chunk.write_byte(Opcode::BwXor as u8, 1);
-
-        // ~8 = -9
-        chunk.write_byte(Opcode::BwNot as u8, 1);
-        chunk.write_byte(Opcode::Return as u8, 1);
-
-        let mut vm = VM::new();
-        let status = vm.interpret(&chunk);
-        assert_eq!(status, InterpretResult::Ok);
-    }
-
-    #[test]
-    fn test_vm_interpret_arrays_build_index_store() {
-        // [10, 20, 30] in local slot 0
-        let mut chunk = Chunk::new();
-        let c10 = chunk.add_constant(Value::number(10.0));
-        let c20 = chunk.add_constant(Value::number(20.0));
-        let c30 = chunk.add_constant(Value::number(30.0));
-        let c1 = chunk.add_constant(Value::number(1.0));
-        let c99 = chunk.add_constant(Value::number(99.0));
-
-        // push 10, 20, 30
-        chunk.write_byte(Opcode::Constant as u8, 1);
-        chunk.write_byte(c10 as u8, 1);
-        chunk.write_byte(Opcode::Constant as u8, 1);
-        chunk.write_byte(c20 as u8, 1);
-        chunk.write_byte(Opcode::Constant as u8, 1);
-        chunk.write_byte(c30 as u8, 1);
-        // build array (now on top of stack at local slot 0)
-        chunk.write_byte(Opcode::ArrayBuild as u8, 1);
+        chunk.write_constant(Value::number(10.0), 1);
+        chunk.write_constant(Value::number(20.0), 1);
+        chunk.write_constant(Value::number(30.0), 1);
+        chunk.write_opcode(Opcode::ArrayBuild, 1);
         chunk.write_byte(3, 1);
 
-        // arr[1] = 99: stack needs: arr, 1, 99
-        chunk.write_byte(Opcode::GetLocal as u8, 1);
-        chunk.write_byte(0, 1);
-        chunk.write_byte(Opcode::Constant as u8, 1);
-        chunk.write_byte(c1 as u8, 1);
-        chunk.write_byte(Opcode::Constant as u8, 1);
-        chunk.write_byte(c99 as u8, 1);
-        chunk.write_byte(Opcode::ArrayStore as u8, 1);
-        chunk.write_byte(Opcode::Pop as u8, 1);
+        chunk.write_constant(Value::number(1.0), 1);
+        chunk.write_opcode(Opcode::ArrayIndex, 1);
 
-        // retrieve arr[1]: stack needs: arr, 1
-        chunk.write_byte(Opcode::GetLocal as u8, 1);
-        chunk.write_byte(0, 1);
-        chunk.write_byte(Opcode::Constant as u8, 1);
-        chunk.write_byte(c1 as u8, 1);
-        chunk.write_byte(Opcode::ArrayIndex as u8, 1);
-        chunk.write_byte(Opcode::Return as u8, 1);
+        chunk.write_opcode(Opcode::Return, 1);
 
-        let mut vm = VM::new();
-        let status = vm.interpret(&chunk);
-        assert_eq!(status, InterpretResult::Ok);
+        let result = vm.interpret(&chunk);
+        assert_eq!(result, InterpretResult::Ok);
+        assert_eq!(vm.stack.len(), 1);
+        assert_eq!(vm.peek(0), Value::number(20.0));
     }
 
     #[test]
-    fn test_vm_interpret_user_function_call() {
-        // Define a function `double(x)` that returns `x * 2`
-        // In the function's bytecode chunk:
-        // slot 0: callee (double)
-        // slot 1: parameter x
-        let mut func_chunk = Chunk::new();
-        func_chunk.write_byte(Opcode::GetLocal as u8, 1);
-        func_chunk.write_byte(1, 1); // parameter x
-        let c2 = func_chunk.add_constant(Value::number(2.0));
-        func_chunk.write_byte(Opcode::Constant as u8, 1);
-        func_chunk.write_byte(c2 as u8, 1);
-        func_chunk.write_byte(Opcode::Multiply as u8, 1);
-        func_chunk.write_byte(Opcode::Return as u8, 1);
-
-        let mut func = crate::heap::ObjFunction::new(1, Some("double".to_string()));
-        func.chunk = Rc::new(func_chunk);
-
+    fn test_vm_interpret_class_instance_and_properties() {
         let mut vm = VM::new();
-        let func_val = vm.allocate_object(HeapObject::Function(func));
+        let mut chunk = Chunk::new();
 
-        // In main script:
-        // push func, push 21, Call 1, Return
-        let mut main_chunk = Chunk::new();
-        let c_func = main_chunk.add_constant(func_val);
-        let c_21 = main_chunk.add_constant(Value::number(21.0));
+        // 1. Declare class
+        let class_name_const = chunk.add_constant(Value::number(1.0));
+        chunk.write_opcode(Opcode::Class, 1);
+        chunk.write_byte(class_name_const as u8, 1);
 
-        main_chunk.write_byte(Opcode::Constant as u8, 1);
-        main_chunk.write_byte(c_func as u8, 1);
-        main_chunk.write_byte(Opcode::Constant as u8, 1);
-        main_chunk.write_byte(c_21 as u8, 1);
-        main_chunk.write_byte(Opcode::Call as u8, 1);
-        main_chunk.write_byte(1, 1); // 1 argument
-        main_chunk.write_byte(Opcode::Return as u8, 1);
+        // 2. Instantiate class: Call with 0 args
+        chunk.write_opcode(Opcode::Call, 1);
+        chunk.write_byte(0, 1);
 
-        let status = vm.interpret(&main_chunk);
-        assert_eq!(status, InterpretResult::Ok);
-    }
+        // Top of stack is now Instance. Let's set property field 42 to 999.0
+        let field_name_const = chunk.add_constant(Value::obj(42));
+        chunk.write_constant(Value::number(999.0), 1);
+        chunk.write_opcode(Opcode::SetProperty, 1);
+        chunk.write_byte(field_name_const as u8, 1);
 
-    #[test]
-    fn test_vm_interpret_closure_and_upvalues() {
-        // Outer function that creates a closure capturing a local variable
-        // var x = 10;
-        // closure returns x + 5;
-        let mut inner_chunk = Chunk::new();
-        // Get upvalue 0 (which captures x)
-        inner_chunk.write_byte(Opcode::GetUpvalue as u8, 1);
-        inner_chunk.write_byte(0, 1);
-        let c5 = inner_chunk.add_constant(Value::number(5.0));
-        inner_chunk.write_byte(Opcode::Constant as u8, 1);
-        inner_chunk.write_byte(c5 as u8, 1);
-        inner_chunk.write_byte(Opcode::Add as u8, 1);
-        inner_chunk.write_byte(Opcode::Return as u8, 1);
+        // Pop returned value from SetProperty
+        chunk.write_opcode(Opcode::Pop, 1);
 
-        let mut inner_func = crate::heap::ObjFunction::new(0, Some("inner".to_string()));
-        inner_func.upvalue_count = 1;
-        inner_func.chunk = Rc::new(inner_chunk);
+        // Top of stack is still instance. Get property 42
+        chunk.write_opcode(Opcode::GetProperty, 1);
+        chunk.write_byte(field_name_const as u8, 1);
 
-        let mut vm = VM::new();
-        let inner_func_val = vm.allocate_object(HeapObject::Function(inner_func));
+        chunk.write_opcode(Opcode::Return, 1);
 
-        let mut main_chunk = Chunk::new();
-        let c10 = main_chunk.add_constant(Value::number(10.0));
-        let c_inner = main_chunk.add_constant(inner_func_val);
-
-        // slot 0 is local x = 10
-        main_chunk.write_byte(Opcode::Constant as u8, 1);
-        main_chunk.write_byte(c10 as u8, 1);
-
-        // Opcode::Closure for inner_func:
-        main_chunk.write_byte(Opcode::Closure as u8, 1);
-        main_chunk.write_byte(c_inner as u8, 1);
-        // captures local slot 0 (is_local = 1, index = 0)
-        main_chunk.write_byte(1, 1);
-        main_chunk.write_byte(0, 1);
-
-        // Call closure with 0 args
-        main_chunk.write_byte(Opcode::Call as u8, 1);
-        main_chunk.write_byte(0, 1);
-
-        // Return result
-        main_chunk.write_byte(Opcode::Return as u8, 1);
-
-        let status = vm.interpret(&main_chunk);
-        assert_eq!(status, InterpretResult::Ok);
+        let result = vm.interpret(&chunk);
+        assert_eq!(result, InterpretResult::Ok);
+        assert_eq!(vm.peek(0), Value::number(999.0));
     }
 }

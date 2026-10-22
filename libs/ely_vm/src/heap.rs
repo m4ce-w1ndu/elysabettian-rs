@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use ely_core::{chunk::Chunk, value::Value};
@@ -10,6 +11,40 @@ pub enum HeapObject {
     Function(ObjFunction),
     Closure(ObjClosure),
     Upvalue(ObjUpvalue),
+    Class(ObjClass),
+    Instance(ObjInstance),
+}
+
+/// Represents a class definition with its methods table.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjClass {
+    pub name: String,
+    pub methods: HashMap<u32, usize>,
+}
+
+impl ObjClass {
+    pub fn new(name: String) -> Self {
+        Self {
+            name,
+            methods: HashMap::new(),
+        }
+    }
+}
+
+/// Represents an instantiated class object with dynamic fields.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjInstance {
+    pub class_id: usize,
+    pub fields: HashMap<u32, Value>,
+}
+
+impl ObjInstance {
+    pub fn new(class_id: usize) -> Self {
+        Self {
+            class_id,
+            fields: HashMap::new(),
+        }
+    }
 }
 
 /// Represents a compiled function object with its bytecode and arity.
