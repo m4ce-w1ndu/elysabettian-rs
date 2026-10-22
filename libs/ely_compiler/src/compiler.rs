@@ -22,6 +22,14 @@ pub enum Precedence {
     Primary,
 }
 
+/// Represents a local variable tracked on the virtual machine stack frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalVar<'a> {
+    pub name: Token<'a>,
+    pub depth: i32,
+    pub is_capture: bool,
+}
+
 impl Precedence {
     /// Returns the immediate higher precedence level.
     #[inline]
@@ -139,6 +147,7 @@ pub struct Compiler<'a> {
     parser: Parser<'a>,
     chunk: Chunk,
     interner: &'a mut StringInterner,
+    locals: Vec<LocalVar<'a>>,
     scope_depth: u32,
 }
 
@@ -149,6 +158,7 @@ impl<'a> Compiler<'a> {
             parser,
             chunk: Chunk::new(),
             interner,
+            locals: Vec::new(),
             scope_depth: 0,
         }
     }
