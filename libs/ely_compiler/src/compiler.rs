@@ -592,6 +592,39 @@ impl<'a> Compiler<'a> {
 
         None
     }
+
+    /// Emits a 16-bit jump instruction with placeholder offset bytes for later back-patching.
+    fn emit_jump(&mut self, opcode: Opcode) -> usize {
+        self.emit_opcode(opcode);
+        self.emit_byte(0xff);
+        self.emit_byte(0xff);
+        self.chunk.count() - 2
+    }
+
+    /// Back-patches a previously emitted 16-bit forward jump with the calculated offset.
+    fn patch_jump(&mut self, offset: usize) {
+        let jump = self.chunk.count() - offset - 2;
+        if jump > u16::MAX as usize {
+            self.parser.error("Too much code to jump over.");
+            return;
+        }
+
+        self.chunk.code[offset] = ((jump >> 8) & 0xff) as u8;
+        self.chunk.code[offset + 1] = (jump & 0xff) as u8;
+    }
+
+    /// Emits a 16-bit backward loop jump instruction targeting the given bytecode offset.
+    fn emit_loop(&mut self, loop_start: usize) {
+        self.emit_opcode(Opcode::Loop);
+        let jump = self.chunk.count() - loop_start + 2;
+        if jump > u16::MAX as usize {
+            self.parser.error("Loop body too large.");
+            return;
+        }
+
+        self.emit_byte(((jump >> 8) & 0xff) as u8);
+        self.emit_byte((jump & 0xff) as u8);
+    }
 }
 
 /// Compiles an Elysabettian source code expression into a bytecode `Chunk`.
@@ -753,11 +786,11 @@ mod tests {
             Opcode::GetLocal,     // slot 0 (b)
             Opcode::Add,
             Opcode::Print,
-            Opcode::Constant,     // 3
-            Opcode::SetLocal,     // slot 0 (b)
-            Opcode::Pop,          // statement pop
-            Opcode::Pop,          // end_scope pops local b off stack!
-            Opcode::Nop,          // implicit return null
+            Opcode::Constant, // 3
+            Opcode::SetLocal, // slot 0 (b)
+            Opcode::Pop,      // statement pop
+            Opcode::Pop,      // end_scope pops local b off stack!
+            Opcode::Nop,      // implicit return null
             Opcode::Return,
         ];
 
