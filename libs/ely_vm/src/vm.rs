@@ -134,6 +134,38 @@ impl<'a> VM<'a> {
                     let a = self.pop().as_number();
                     self.push(Value::bool(a < b));
                 }
+                Opcode::DefineGlobal => {
+                    let name_id = frame.read_constant().as_obj() as u32;
+                    let val = self.pop();
+                    self.globals.insert(name_id, val);
+                }
+                Opcode::GetGlobal => {
+                    let name_id = frame.read_constant().as_obj() as u32;
+                    if let Some(val) = self.globals.get(&name_id) {
+                        self.push(*val);
+                    } else {
+                        return InterpretResult::RuntimeError;
+                    }
+                }
+                Opcode::SetGlobal => {
+                    let name_id = frame.read_constant().as_obj() as u32;
+                    if !self.globals.contains_key(&name_id) {
+                        return InterpretResult::RuntimeError;
+                    }
+                    let value = self.peek(0);
+                    self.globals.insert(name_id, value);
+                }
+                Opcode::GetLocal => {
+                    let slot = frame.read_byte() as usize;
+                    let value = self.stack[frame.slots + slot];
+                    self.push(value);
+                }
+                Opcode::SetLocal => {
+                    let slot = frame.read_byte() as usize;
+                    let idx = frame.slots + slot;
+                    let value = self.peek(0);
+                    self.stack[idx] = value;
+                }
                 _ => return InterpretResult::RuntimeError,
             }
         }
@@ -308,5 +340,56 @@ mod tests {
         let result = vm.interpret(&chunk);
 
         assert_eq!(result, InterpretResult::Ok);
+    }
+
+    #[test]
+    fn test_vm_interpret_globals_and_locals() {
+        // var x = 10;
+        // {
+        //   var y = 20;
+        //   x = y + 5;
+        // }
+        let mut chunk = Chunk::new();
+        let name_x = chunk.add_constant(Value::obj(100)); // id 100
+        let c_10 = chunk.add_constant(Value::number(10.0));
+        let c_20 = chunk.add_constant(Value::number(20.0));
+        let c_5 = chunk.add_constant(Value::number(5.0));
+
+        // push 10, define global x
+        chunk.write_byte(Opcode::Constant as u8, 1);
+        chunk.write_byte(c_10 as u8, 1);
+        chunk.write_byte(Opcode::DefineGlobal as u8, 1);
+        chunk.write_byte(name_x as u8, 1);
+
+        // push 20 (local slot 0)
+        chunk.write_byte(Opcode::Constant as u8, 1);
+        chunk.write_byte(c_20 as u8, 1);
+
+        // get local slot 0
+        chunk.write_byte(Opcode::GetLocal as u8, 1);
+        chunk.write_byte(0, 1);
+
+        // push 5, add -> 25
+        chunk.write_byte(Opcode::Constant as u8, 1);
+        chunk.write_byte(c_5 as u8, 1);
+        chunk.write_byte(Opcode::Add as u8, 1);
+
+        // set global x
+        chunk.write_byte(Opcode::SetGlobal as u8, 1);
+        chunk.write_byte(name_x as u8, 1);
+        chunk.write_byte(Opcode::Pop as u8, 1);
+
+        // pop local slot 0
+        chunk.write_byte(Opcode::Pop as u8, 1);
+
+        // return
+        chunk.write_byte(Opcode::Nop as u8, 1);
+        chunk.write_byte(Opcode::Return as u8, 1);
+
+        let mut vm = VM::new();
+        let result = vm.interpret(&chunk);
+
+        assert_eq!(result, InterpretResult::Ok);
+        assert_eq!(vm.globals.get(&100).unwrap().as_number(), 25.0);
     }
 }
