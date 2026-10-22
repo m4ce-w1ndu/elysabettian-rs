@@ -397,7 +397,6 @@ impl<'a> CallFrame<'a> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
