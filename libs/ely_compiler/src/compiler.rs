@@ -363,7 +363,11 @@ impl<'a> Compiler<'a> {
             return;
         }
 
-        self.statement();
+        if self.parser.match_token(TokenType::Var) {
+            self.var_declaration();
+        } else {
+            self.statement();
+        }
 
         if self.parser.panic_mode {
             self.synchronize();
@@ -423,6 +427,24 @@ impl<'a> Compiler<'a> {
             self.emit_opcode(Opcode::DefineGlobal);
             self.emit_byte(global_constant_idx);
         }
+    }
+
+    /// Parses a variable declaration statement (`var <name> [= <expr>];`).
+    fn var_declaration(&mut self) {
+        let global = self.parse_variable("Expected variable name.");
+
+        if self.parser.match_token(TokenType::Assign) {
+            self.expression();
+        } else {
+            self.emit_opcode(Opcode::Nop);
+        }
+
+        self.parser.consume(
+            TokenType::Semicolon,
+            "Expected ';' after variable declaration.",
+        );
+
+        self.define_variable(global);
     }
 }
 
