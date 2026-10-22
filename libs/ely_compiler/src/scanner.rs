@@ -79,4 +79,27 @@ impl<'a> Scanner<'a> {
     pub fn error_token(&self, message: &'static str) -> Token<'a> {
         Token::new(TokenType::Error, message, self.line)
     }
+
+    /// Skips whitespace characters and single-line comments (`//`), tracking newline increments.
+    pub fn skip_whitespace(&mut self) {
+        loop {
+            match self.peek() {
+                ' ' | '\r' | '\t' => _ = self.advance(),
+                '\n' => {
+                    _ = self.advance();
+                    self.line += 1;
+                }
+                '/' => {
+                    if self.peek_next() != '/' {
+                        return;
+                    }
+
+                    while self.peek() != '\n' && !self.is_at_end() {
+                        _ = self.advance();
+                    }
+                }
+                _ => return,
+            }
+        }
+    }
 }
