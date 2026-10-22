@@ -101,7 +101,10 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
                 .get_constant(name_idx as usize)
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "<unknown>".to_string());
-            println!("{:<16} ({argc} args) {:4} '{}'", "invk", name_idx, value_str);
+            println!(
+                "{:<16} ({argc} args) {:4} '{}'",
+                "invk", name_idx, value_str
+            );
             offset + 3
         }
         Opcode::SuperInvoke => {
@@ -111,7 +114,10 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
                 .get_constant(name_idx as usize)
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "<unknown>".to_string());
-            println!("{:<16} ({argc} args) {:4} '{}'", "sinvk", name_idx, value_str);
+            println!(
+                "{:<16} ({argc} args) {:4} '{}'",
+                "sinvk", name_idx, value_str
+            );
             offset + 3
         }
         Opcode::Closure => {
@@ -140,9 +146,9 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
         Opcode::BwNot => simple_instruction("bwnot", offset),
         Opcode::ShiftLeft => simple_instruction("shl", offset),
         Opcode::ShiftRight => simple_instruction("shr", offset),
-        Opcode::ArrayBuild => byte_instruction("arr_build", chunk, offset),
-        Opcode::ArrayIndex => simple_instruction("arr_index", offset),
-        Opcode::ArrayStore => simple_instruction("arr_store", offset),
+        Opcode::ArrayBuild => byte_instruction("arrbld", chunk, offset),
+        Opcode::ArrayIndex => simple_instruction("arridx", offset),
+        Opcode::ArrayStore => simple_instruction("arrstr", offset),
     }
 }
 
