@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use ely_core::chunk::Chunk;
+use ely_core::opcode::Opcode;
 use ely_core::value::Value;
 
 /// Represents the outcome of interpreting a bytecode chunk.
@@ -28,6 +29,13 @@ impl<'a> VM<'a> {
         }
     }
 
+    /// Interprets a compiled bytecode chunk by initializing the top-level call frame and dispatching.
+    pub fn interpret(&mut self, chunk: &'a Chunk) -> InterpretResult {
+        self.reset_stack();
+        self.frames.push(CallFrame::new(chunk, 0));
+        self.run()
+    }
+
     /// Resets the value stack and call frame stack.
     pub fn reset_stack(&mut self) {
         self.stack.clear();
@@ -47,6 +55,34 @@ impl<'a> VM<'a> {
     /// Peeks a value at the specified distance from the top of the stack.
     pub fn peek(&self, distance: usize) -> Value {
         self.stack[self.stack.len() - 1 - distance]
+    }
+
+    fn run(&mut self) -> InterpretResult {
+        loop {
+            let frame = self.frames.last_mut().expect("No active frame.");
+            let instruction = frame.read_byte();
+
+            let opcode = match Opcode::try_from(instruction) {
+                Ok(op) => op,
+                Err(_) => return InterpretResult::RuntimeError,
+            };
+
+            match opcode {
+                Opcode::Constant => {
+                    let value = frame.read_constant();
+                    self.push(value);
+                }
+                Opcode::True => self.push(Value::bool(true)),
+                Opcode::False => self.push(Value::bool(false)),
+                Opcode::Nop => self.push(Value::null()),
+                Opcode::Pop => _ = self.pop(),
+                Opcode::Return => {
+                    self.pop();
+                    return InterpretResult::Ok;
+                }
+                _ => return InterpretResult::RuntimeError,
+            }
+        }
     }
 }
 
@@ -126,5 +162,29 @@ mod tests {
 
         assert_eq!(frame.read_short(), 0x1234);
         assert_eq!(frame.read_constant().as_number(), 99.0);
+    }
+
+    #[test]
+    fn test_vm_interpret_constants_and_literals() {
+        let mut chunk = Chunk::new();
+        // push 42.0
+        let c = chunk.add_constant(Value::number(42.0));
+        chunk.write_byte(Opcode::Constant as u8, 1);
+        chunk.write_byte(c as u8, 1);
+        // push true, false, null
+        chunk.write_byte(Opcode::True as u8, 1);
+        chunk.write_byte(Opcode::False as u8, 1);
+        chunk.write_byte(Opcode::Nop as u8, 1);
+        // pop null, false, true
+        chunk.write_byte(Opcode::Pop as u8, 1);
+        chunk.write_byte(Opcode::Pop as u8, 1);
+        chunk.write_byte(Opcode::Pop as u8, 1);
+        // return 42.0
+        chunk.write_byte(Opcode::Return as u8, 1);
+
+        let mut vm = VM::new();
+        let result = vm.interpret(&chunk);
+
+        assert_eq!(result, InterpretResult::Ok);
     }
 }
