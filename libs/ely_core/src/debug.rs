@@ -90,7 +90,7 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
         Opcode::Negate => simple_instruction("neg", offset),
         Opcode::Print => simple_instruction("print", offset),
         Opcode::Jump => jump_instruction("jmp", 1, chunk, offset),
-        Opcode::JumpIfFalse => jump_instruction("joz", 1, chunk, offset),
+        Opcode::JumpIfFalse => jump_instruction("jz", 1, chunk, offset),
         Opcode::Loop => jump_instruction("iter", -1, chunk, offset),
         Opcode::Call => byte_instruction("call", chunk, offset),
         Opcode::Invoke => {
