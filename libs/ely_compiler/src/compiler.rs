@@ -311,7 +311,11 @@ impl<'a> Compiler<'a> {
 
         while precedence <= Self::get_precedence(self.parser.current.token_type) {
             self.parser.advance();
-            self.binary();
+            match self.parser.previous.token_type {
+                TokenType::And => self.and(),
+                TokenType::Or => self.or(),
+                _ => self.binary(),
+            }
         }
 
         if can_assign && self.parser.match_token(TokenType::Assign) {
@@ -334,6 +338,8 @@ impl<'a> Compiler<'a> {
             | TokenType::BwAnd
             | TokenType::ShiftLeft
             | TokenType::ShiftRight => Precedence::Term,
+            TokenType::And => Precedence::And,
+            TokenType::Or => Precedence::Or,
             _ => Precedence::None,
         }
     }
@@ -733,6 +739,26 @@ impl<'a> Compiler<'a> {
 
         self.end_scope();
     }
+
+    /// Compiles an infix logical `and` expression with short-circuiting.
+    fn and(&mut self) {
+        let end_jump = self.emit_jump(Opcode::JumpIfFalse);
+        self.emit_opcode(Opcode::Pop);
+        self.parse_precedence(Precedence::And);
+        self.patch_jump(end_jump);
+    }
+
+    /// Compiles an infix logical `or` expression with short-circuiting.
+    fn or(&mut self) {
+        let else_jump = self.emit_jump(Opcode::JumpIfFalse);
+        let end_jump = self.emit_jump(Opcode::Jump);
+
+        self.patch_jump(else_jump);
+        self.emit_opcode(Opcode::Pop);
+
+        self.parse_precedence(Precedence::Or);
+        self.patch_jump(end_jump);
+    }
 }
 
 /// Compiles an Elysabettian source code expression into a bytecode `Chunk`.
@@ -925,7 +951,7 @@ mod tests {
             Opcode::Pop,
             Opcode::Constant, // then branch
             Opcode::Print,
-            Opcode::Jump,     // skip else
+            Opcode::Jump, // skip else
             Opcode::Pop,
             Opcode::Constant, // else branch
             Opcode::Print,
@@ -1011,6 +1037,32 @@ mod tests {
             Opcode::Pop,
             Opcode::Loop,
             Opcode::Pop,
+            Opcode::Nop,
+            Opcode::Return,
+        ];
+
+        assert_eq!(extract_opcodes(&chunk), expected_opcodes);
+    }
+
+    #[test]
+    fn test_compile_logical_and_or() {
+        let mut interner = StringInterner::new();
+        let source = "false && true || 42;";
+        let chunk = compile(source, &mut interner).expect("Compilation failed.");
+
+        ely_core::debug::disassemble_chunk(&chunk, "test_logical_and_or");
+
+        let expected_opcodes = vec![
+            Opcode::False,
+            Opcode::JumpIfFalse, // short-circuit and
+            Opcode::Pop,
+            Opcode::True,
+            // or starts
+            Opcode::JumpIfFalse,
+            Opcode::Jump,        // short-circuit or
+            Opcode::Pop,
+            Opcode::Constant,    // 42
+            Opcode::Pop,         // statement pop
             Opcode::Nop,
             Opcode::Return,
         ];
