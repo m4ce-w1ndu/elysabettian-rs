@@ -392,6 +392,38 @@ impl<'a> Compiler<'a> {
             self.parser.advance();
         }
     }
+
+    /// Interns an identifier token string and records it into the constant pool.
+    fn identifier_constant(&mut self, token: Token<'a>) -> u8 {
+        let string_id = self.interner.intern(token.lexeme);
+        let const_idx = self.chunk.add_constant(Value::obj(string_id as u64));
+
+        if const_idx > u8::MAX as usize {
+            self.parser.error("Too many constants in one chunk.");
+            0
+        } else {
+            const_idx as u8
+        }
+    }
+
+    /// Consumes an identifier token and resolves its constant index for global binding.
+    fn parse_variable(&mut self, error_msg: &str) -> u8 {
+        self.parser.consume(TokenType::Identifier, error_msg);
+
+        if self.scope_depth > 0 {
+            return 0;
+        }
+
+        self.identifier_constant(self.parser.previous)
+    }
+
+    /// Emits global variable definition bytecode when in top-level scope.
+    fn define_variable(&mut self, global_constant_idx: u8) {
+        if self.scope_depth == 0 {
+            self.emit_opcode(Opcode::DefineGlobal);
+            self.emit_byte(global_constant_idx);
+        }
+    }
 }
 
 /// Compiles an Elysabettian source code expression into a bytecode `Chunk`.
