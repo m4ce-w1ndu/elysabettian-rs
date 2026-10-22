@@ -102,4 +102,22 @@ impl<'a> Scanner<'a> {
             }
         }
     }
+
+    /// Scans a double-quoted string literal, supporting multiline strings.
+    fn string(&mut self) -> Token<'a> {
+        while self.peek() != '"' && !self.is_at_end() {
+            if self.peek() == '\n' {
+                self.line += 1;
+            }
+            _ = self.advance();
+        }
+
+        if self.is_at_end() {
+            return self.error_token("Unterminated string.");
+        }
+
+        _ = self.advance();
+
+        self.make_token(TokenType::String)
+    }
 }
