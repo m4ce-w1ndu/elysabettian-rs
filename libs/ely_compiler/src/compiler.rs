@@ -120,10 +120,6 @@ impl<'a> Parser<'a> {
 
     /// Checks whether the current token matches the expected token type without consuming it.
     pub fn check(&self, expected: TokenType) -> bool {
-        if self.current.token_type == TokenType::Eof {
-            return false;
-        }
-
         self.current.token_type == expected
     }
 
@@ -350,6 +346,42 @@ impl<'a> Compiler<'a> {
             .consume(TokenType::Semicolon, "Expected ';' after expression.");
         self.emit_opcode(Opcode::Pop);
     }
+
+    /// Parses a declaration or statement, synchronizing error state if panic mode was triggered.
+    fn declaration(&mut self) {
+        if self.parser.check(TokenType::Eof) {
+            return;
+        }
+
+        self.statement();
+
+        if self.parser.panic_mode {
+            self.synchronize();
+        }
+    }
+
+    /// Synchronizes the parser state after a syntax error by advancing to the next statement boundary.
+    fn synchronize(&mut self) {
+        self.parser.panic_mode = false;
+        while !self.parser.check(TokenType::Eof) {
+            if self.parser.previous.token_type == TokenType::Semicolon {
+                return;
+            }
+
+            match self.parser.current.token_type {
+                TokenType::Class
+                | TokenType::Func
+                | TokenType::Var
+                | TokenType::For
+                | TokenType::If
+                | TokenType::Print
+                | TokenType::Return => return,
+                _ => (),
+            }
+
+            self.parser.advance();
+        }
+    }
 }
 
 /// Compiles an Elysabettian source code expression into a bytecode `Chunk`.
@@ -362,10 +394,10 @@ pub fn compile(source: &str, interner: &mut StringInterner) -> Option<Chunk> {
     parser.advance();
 
     let mut compiler = Compiler::new(parser, interner);
-    compiler.expression();
-    compiler
-        .parser
-        .consume(TokenType::Eof, "Expected end of expression.");
+
+    while !compiler.parser.check(TokenType::Eof) {
+        compiler.declaration();
+    }
 
     compiler.emit_return();
 
@@ -384,7 +416,7 @@ mod tests {
     #[test]
     fn test_compile_math_expression() {
         let mut interner = StringInterner::new();
-        let chunk = compile("1 + 2 * 3", &mut interner).expect("Compilation failed.");
+        let chunk = compile("1 + 2 * 3;", &mut interner).expect("Compilation failed.");
 
         disassemble_chunk(&chunk, "test_math");
         assert_eq!(chunk.constants.len(), 3);
