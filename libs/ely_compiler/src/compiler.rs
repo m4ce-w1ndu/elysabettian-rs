@@ -425,6 +425,7 @@ impl<'a> Compiler<'a> {
     /// Consumes an identifier token and resolves its constant index for global binding.
     fn parse_variable(&mut self, error_msg: &str) -> u8 {
         self.parser.consume(TokenType::Identifier, error_msg);
+        self.declare_variable();
 
         if self.scope_depth > 0 {
             return 0;
@@ -435,6 +436,11 @@ impl<'a> Compiler<'a> {
 
     /// Emits global variable definition bytecode when in top-level scope.
     fn define_variable(&mut self, global_constant_idx: u8) {
+        if self.scope_depth > 0 {
+            self.mark_initialized();
+            return;
+        }
+
         if self.scope_depth == 0 {
             self.emit_opcode(Opcode::DefineGlobal);
             self.emit_byte(global_constant_idx);
@@ -465,11 +471,21 @@ impl<'a> Compiler<'a> {
 
         if can_assign && self.parser.match_token(TokenType::Assign) {
             self.expression();
-            self.emit_opcode(SetGlobal);
-            self.emit_byte(arg);
+            if let Some(slot) = self.resolve_local(name) {
+                self.emit_opcode(Opcode::SetLocal);
+                self.emit_byte(slot);
+            } else {
+                self.emit_opcode(Opcode::SetGlobal);
+                self.emit_byte(arg);
+            }
         } else {
-            self.emit_opcode(Opcode::GetGlobal);
-            self.emit_byte(arg);
+            if let Some(slot) = self.resolve_local(name) {
+                self.emit_opcode(Opcode::GetLocal);
+                self.emit_byte(slot);
+            } else {
+                self.emit_opcode(Opcode::GetGlobal);
+                self.emit_byte(arg);
+            }
         }
     }
 
@@ -506,6 +522,75 @@ impl<'a> Compiler<'a> {
 
         self.parser
             .consume(TokenType::CloseCurly, "Expected '}' after block.");
+    }
+
+    /// Adds a local variable entry to the tracking list with uninitialized depth (-1).
+    fn add_local(&mut self, name: Token<'a>) {
+        if self.locals.len() >= 256 {
+            self.parser.error("Too many local variables in function.");
+            return;
+        }
+
+        self.locals.push(LocalVar {
+            name,
+            depth: -1,
+            is_capture: false,
+        })
+    }
+
+    /// Declares a local variable in the current block scope, rejecting duplicates in the same depth.
+    fn declare_variable(&mut self) {
+        if self.scope_depth == 0 {
+            return;
+        }
+
+        let name = self.parser.previous;
+
+        for var in self.locals.iter().rev() {
+            if var.depth != -1 && var.depth < self.scope_depth as i32 {
+                break;
+            }
+
+            if var.name.lexeme == name.lexeme {
+                self.parser
+                    .error("Already a variable with this name in this scope.");
+                return;
+            }
+        }
+
+        self.add_local(name);
+    }
+
+    /// Marks the most recent local variable as fully initialized with the current scope depth.
+    fn mark_initialized(&mut self) {
+        if self.scope_depth <= 0 {
+            return;
+        }
+
+        if self.locals.last().is_none() {
+            return;
+        }
+
+        self.locals.last_mut().unwrap().depth = self.scope_depth as i32;
+    }
+
+    /// Resolves a local variable by scanning the stack backwards, returning its slot index.
+    fn resolve_local(&mut self, name: Token<'a>) -> Option<u8> {
+        if let Some(slot) = self
+            .locals
+            .iter()
+            .rposition(|l| l.name.lexeme == name.lexeme)
+        {
+            if self.locals[slot].depth == -1 {
+                self.parser
+                    .error("Cannot read local variable in its own initializer.");
+                return None;
+            } else {
+                return Some(slot as u8);
+            }
+        }
+
+        None
     }
 }
 
@@ -643,5 +728,39 @@ mod tests {
                 .iter()
                 .any(|c| c.is_number() && c.as_number() == 20.0)
         );
+    }
+
+    #[test]
+    fn test_compile_local_variables_and_scopes() {
+        let mut interner = StringInterner::new();
+        let source = r#"
+            var a = 1;
+            {
+                var b = 2;
+                print a + b;
+                b = 3;
+            }
+        "#;
+        let chunk = compile(source, &mut interner).expect("Compilation failed.");
+
+        ely_core::debug::disassemble_chunk(&chunk, "test_locals_scope");
+
+        let expected_opcodes = vec![
+            Opcode::Constant,     // a = 1
+            Opcode::DefineGlobal, // 'a'
+            Opcode::Constant,     // b = 2 (local slot 0)
+            Opcode::GetGlobal,    // 'a'
+            Opcode::GetLocal,     // slot 0 (b)
+            Opcode::Add,
+            Opcode::Print,
+            Opcode::Constant,     // 3
+            Opcode::SetLocal,     // slot 0 (b)
+            Opcode::Pop,          // statement pop
+            Opcode::Pop,          // end_scope pops local b off stack!
+            Opcode::Nop,          // implicit return null
+            Opcode::Return,
+        ];
+
+        assert_eq!(extract_opcodes(&chunk), expected_opcodes);
     }
 }
