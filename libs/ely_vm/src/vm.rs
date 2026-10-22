@@ -123,12 +123,12 @@ impl VM {
                     let closing_frame = self.frames.pop().unwrap();
                     self.close_upvalue(closing_frame.slots);
 
+                    self.stack.truncate(closing_frame.slots);
+                    self.push(result);
+
                     if self.frames.is_empty() {
                         return InterpretResult::Ok;
                     }
-
-                    self.stack.truncate(closing_frame.slots);
-                    self.push(result);
                 }
                 Opcode::Add => {
                     if !self.binary_op(|a, b| a + b) {
@@ -339,11 +339,14 @@ impl VM {
                                     let slots = self.stack.len() - arg_count - 1;
                                     let chunk = func.chunk.clone();
                                     let closure_id = callee.as_obj() as usize;
-                                    self.frames.push(CallFrame::with_closure(chunk, slots, closure_id));
+                                    self.frames
+                                        .push(CallFrame::with_closure(chunk, slots, closure_id));
                                 }
                                 Some(HeapObject::Class(_)) => {
                                     let class_id = callee.as_obj() as usize;
-                                    let instance_val = self.allocate_object(HeapObject::Instance(crate::heap::ObjInstance::new(class_id)));
+                                    let instance_val = self.allocate_object(HeapObject::Instance(
+                                        crate::heap::ObjInstance::new(class_id),
+                                    ));
                                     let callee_slot = self.stack.len() - arg_count - 1;
                                     self.stack[callee_slot] = instance_val;
                                 }
@@ -462,7 +465,7 @@ impl VM {
                     let class_val = self.peek(0);
 
                     let method_id = method_val.as_obj() as usize;
-                    if let Some(HeapObject::Class(ref mut class_obj)) = self.get_object_mut(class_val) {
+                    if let Some(HeapObject::Class(class_obj)) = self.get_object_mut(class_val) {
                         class_obj.methods.insert(name_id, method_id);
                     } else {
                         return InterpretResult::RuntimeError;
@@ -499,7 +502,8 @@ impl VM {
                     let value = self.pop();
                     let instance_val = self.pop();
 
-                    if let Some(HeapObject::Instance(ref mut instance)) = self.get_object_mut(instance_val) {
+                    if let Some(HeapObject::Instance(instance)) = self.get_object_mut(instance_val)
+                    {
                         instance.fields.insert(name_id, value);
                         self.push(value);
                     } else {
@@ -657,12 +661,18 @@ impl CallFrame {
 mod tests {
     use super::*;
 
+    fn emit_constant(chunk: &mut Chunk, val: Value, line: u32) {
+        let idx = chunk.add_constant(val);
+        chunk.write_opcode(Opcode::Constant, line);
+        chunk.write_byte(idx as u8, line);
+    }
+
     #[test]
     fn test_vm_interpret_simple_return() {
         let mut vm = VM::new();
         let mut chunk = Chunk::new();
 
-        chunk.write_constant(Value::number(42.0), 1);
+        emit_constant(&mut chunk, Value::number(42.0), 1);
         chunk.write_opcode(Opcode::Return, 1);
 
         let result = vm.interpret(&chunk);
@@ -676,10 +686,10 @@ mod tests {
         let mut vm = VM::new();
         let mut chunk = Chunk::new();
 
-        chunk.write_constant(Value::number(10.0), 1);
-        chunk.write_constant(Value::number(5.0), 1);
+        emit_constant(&mut chunk, Value::number(10.0), 1);
+        emit_constant(&mut chunk, Value::number(5.0), 1);
         chunk.write_opcode(Opcode::Add, 1);
-        chunk.write_constant(Value::number(2.0), 1);
+        emit_constant(&mut chunk, Value::number(2.0), 1);
         chunk.write_opcode(Opcode::Multiply, 1);
         chunk.write_opcode(Opcode::Return, 1);
 
@@ -694,10 +704,10 @@ mod tests {
         let mut vm = VM::new();
         let mut chunk = Chunk::new();
 
-        chunk.write_constant(Value::number(12.0), 1);
-        chunk.write_constant(Value::number(5.0), 1);
+        emit_constant(&mut chunk, Value::number(12.0), 1);
+        emit_constant(&mut chunk, Value::number(5.0), 1);
         chunk.write_opcode(Opcode::BwAnd, 1);
-        chunk.write_constant(Value::number(3.0), 1);
+        emit_constant(&mut chunk, Value::number(3.0), 1);
         chunk.write_opcode(Opcode::BwOr, 1);
         chunk.write_opcode(Opcode::Return, 1);
 
@@ -712,13 +722,13 @@ mod tests {
         let mut vm = VM::new();
         let mut chunk = Chunk::new();
 
-        chunk.write_constant(Value::number(10.0), 1);
-        chunk.write_constant(Value::number(20.0), 1);
-        chunk.write_constant(Value::number(30.0), 1);
+        emit_constant(&mut chunk, Value::number(10.0), 1);
+        emit_constant(&mut chunk, Value::number(20.0), 1);
+        emit_constant(&mut chunk, Value::number(30.0), 1);
         chunk.write_opcode(Opcode::ArrayBuild, 1);
         chunk.write_byte(3, 1);
 
-        chunk.write_constant(Value::number(1.0), 1);
+        emit_constant(&mut chunk, Value::number(1.0), 1);
         chunk.write_opcode(Opcode::ArrayIndex, 1);
 
         chunk.write_opcode(Opcode::Return, 1);
@@ -735,7 +745,7 @@ mod tests {
         let mut chunk = Chunk::new();
 
         // 1. Declare class
-        let class_name_const = chunk.add_constant(Value::number(1.0));
+        let class_name_const = chunk.add_constant(Value::obj(1));
         chunk.write_opcode(Opcode::Class, 1);
         chunk.write_byte(class_name_const as u8, 1);
 
@@ -743,16 +753,23 @@ mod tests {
         chunk.write_opcode(Opcode::Call, 1);
         chunk.write_byte(0, 1);
 
-        // Top of stack is now Instance. Let's set property field 42 to 999.0
+        // Store instance in local slot 0
+        chunk.write_opcode(Opcode::SetLocal, 1);
+        chunk.write_byte(0, 1);
+
+        // Set property field 42 = 999.0: pushes instance, pushes value
+        chunk.write_opcode(Opcode::GetLocal, 1);
+        chunk.write_byte(0, 1);
         let field_name_const = chunk.add_constant(Value::obj(42));
-        chunk.write_constant(Value::number(999.0), 1);
+        emit_constant(&mut chunk, Value::number(999.0), 1);
         chunk.write_opcode(Opcode::SetProperty, 1);
         chunk.write_byte(field_name_const as u8, 1);
-
-        // Pop returned value from SetProperty
+        // Pop result of SetProperty
         chunk.write_opcode(Opcode::Pop, 1);
 
-        // Top of stack is still instance. Get property 42
+        // Get property field 42: push instance, GetProperty
+        chunk.write_opcode(Opcode::GetLocal, 1);
+        chunk.write_byte(0, 1);
         chunk.write_opcode(Opcode::GetProperty, 1);
         chunk.write_byte(field_name_const as u8, 1);
 
