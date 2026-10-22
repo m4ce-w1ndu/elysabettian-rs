@@ -136,4 +136,36 @@ impl<'a> Scanner<'a> {
 
         self.make_token(TokenType::Number)
     }
+
+    /// Identifies whether the current identifier slice matches a reserved language keyword.
+    fn identifier_type(&self) -> TokenType {
+        match &self.source[self.start..self.current] {
+            "class" => TokenType::Class,
+            "else" => TokenType::Else,
+            "false" => TokenType::False,
+            "for" => TokenType::For,
+            "func" => TokenType::Func,
+            "if" => TokenType::If,
+            "import" => TokenType::Import,
+            "null" => TokenType::Null,
+            "print" => TokenType::Print,
+            "return" => TokenType::Return,
+            "super" => TokenType::Super,
+            "this" => TokenType::This,
+            "true" => TokenType::True,
+            "var" => TokenType::Var,
+            "while" => TokenType::While,
+            _ => TokenType::Identifier,
+        }
+    }
+
+    /// Scans an identifier or keyword token.
+    fn identifier(&mut self) -> Token<'a> {
+        while self.peek().is_ascii_alphanumeric() || self.peek() == '_' {
+            _ = self.advance();
+        }
+
+        let token_type = self.identifier_type();
+        self.make_token(token_type)
+    }
 }
