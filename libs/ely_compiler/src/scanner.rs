@@ -103,6 +103,98 @@ impl<'a> Scanner<'a> {
         }
     }
 
+    /// Scans and returns the next token from the source code.
+    pub fn scan_token(&mut self) -> Token<'a> {
+        self.skip_whitespace();
+        self.start = self.current;
+
+        if self.is_at_end() {
+            return self.make_token(TokenType::Eof);
+        }
+
+        let c = self.advance();
+
+        if c.is_ascii_alphabetic() || c == '_' {
+            return self.identifier();
+        }
+
+        if c.is_ascii_digit() {
+            return self.number();
+        }
+
+        match c {
+            '(' => self.make_token(TokenType::OpenParen),
+            ')' => self.make_token(TokenType::CloseParen),
+            '{' => self.make_token(TokenType::OpenCurly),
+            '}' => self.make_token(TokenType::CloseCurly),
+            '[' => self.make_token(TokenType::OpenSquare),
+            ']' => self.make_token(TokenType::CloseSquare),
+            ';' => self.make_token(TokenType::Semicolon),
+            ',' => self.make_token(TokenType::Comma),
+            '.' => self.make_token(TokenType::Dot),
+            '-' => self.make_token(TokenType::Minus),
+            '+' => self.make_token(TokenType::Plus),
+            '/' => self.make_token(TokenType::Divide),
+            '*' => self.make_token(TokenType::Multiply),
+            '~' => self.make_token(TokenType::BwNot),
+            '^' => self.make_token(TokenType::BwXor),
+            '!' => {
+                let token_type = if self.match_char('=') {
+                    TokenType::NonEquality
+                } else {
+                    TokenType::Negate
+                };
+                self.make_token(token_type)
+            }
+            '=' => {
+                let token_type = if self.match_char('=') {
+                    TokenType::Equality
+                } else {
+                    TokenType::Assign
+                };
+                self.make_token(token_type)
+            }
+            '<' => {
+                let token_type = if self.match_char('=') {
+                    TokenType::LessThanEqual
+                } else if self.match_char('<') {
+                    TokenType::ShiftLeft
+                } else {
+                    TokenType::LessThan
+                };
+                self.make_token(token_type)
+            }
+            '>' => {
+                let token_type = if self.match_char('=') {
+                    TokenType::GreaterThanEqual
+                } else if self.match_char('>') {
+                    TokenType::ShiftRight
+                } else {
+                    TokenType::GreaterThan
+                };
+                self.make_token(token_type)
+            }
+            '&' => {
+                let token_type = if self.match_char('&') {
+                    TokenType::And
+                } else {
+                    TokenType::BwAnd
+                };
+                self.make_token(token_type)
+            }
+            '|' => {
+                let token_type = if self.match_char('|') {
+                    TokenType::Or
+                } else {
+                    TokenType::BwOr
+                };
+                self.make_token(token_type)
+            }
+            '"' => self.string(),
+            _ => self.error_token("Unexpected character."),
+        }
+    }
+
     /// Scans a double-quoted string literal, supporting multiline strings.
     fn string(&mut self) -> Token<'a> {
         while self.peek() != '"' && !self.is_at_end() {
