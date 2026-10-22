@@ -113,4 +113,23 @@ impl<'a> Parser<'a> {
 
         self.error_at_current(message);
     }
+
+    /// Checks whether the current token matches the expected token type without consuming it.
+    pub fn check(&self, expected: TokenType) -> bool {
+        if self.current.token_type == TokenType::Eof {
+            return false;
+        }
+
+        self.current.token_type == expected
+    }
+
+    /// Conditionally consumes the current token if it matches `expected`.
+    pub fn match_token(&mut self, expected: TokenType) -> bool {
+        if !self.check(expected) {
+            return false;
+        }
+
+        self.advance();
+        true
+    }
 }
