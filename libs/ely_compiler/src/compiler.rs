@@ -326,3 +326,27 @@ impl<'a> Compiler<'a> {
         }
     }
 }
+
+/// Compiles an Elysabettian source code expression into a bytecode `Chunk`.
+///
+/// Returns `Some(Chunk)` on successful compilation, or `None` if syntax errors occurred.
+pub fn compile(source: &str, interner: &mut StringInterner) -> Option<Chunk> {
+    let scanner = Scanner::new(source);
+    let mut parser = Parser::new(scanner);
+
+    parser.advance();
+
+    let mut compiler = Compiler::new(parser, interner);
+    compiler.expression();
+    compiler
+        .parser
+        .consume(TokenType::Eof, "Expected end of expression.");
+
+    compiler.emit_return();
+
+    if compiler.parser.had_error {
+        None
+    } else {
+        Some(compiler.chunk)
+    }
+}
