@@ -342,6 +342,12 @@ impl<'a> Compiler<'a> {
     fn statement(&mut self) {
         if self.parser.match_token(TokenType::Print) {
             self.print_statement();
+        } else if self.parser.match_token(TokenType::OpenCurly) {
+            self.begin_scope();
+            self.block();
+            self.end_scope();
+        } else if self.parser.match_token(TokenType::Print) {
+            self.print_statement();
         } else {
             self.expression_statement();
         }
@@ -472,6 +478,35 @@ impl<'a> Compiler<'a> {
         let name = self.parser.previous;
         self.named_variable(name, can_assign)
     }
+
+    /// Enters a new block scope level.
+    fn begin_scope(&mut self) {
+        self.scope_depth += 1;
+    }
+
+    /// Exits the current block scope level, popping local variables off the stack.
+    fn end_scope(&mut self) {
+        self.scope_depth -= 1;
+
+        while self.locals.last().is_some()
+            && self.locals.last().unwrap().depth >= self.scope_depth as i32
+        {
+            self.locals.pop();
+            self.emit_opcode(Opcode::Pop);
+        }
+    }
+
+    /// Parses a sequence of declarations enclosed in `{ ... }`.
+    fn block(&mut self) {
+        while self.parser.current.token_type != TokenType::CloseCurly
+            && self.parser.current.token_type != TokenType::Eof
+        {
+            self.declaration();
+        }
+
+        self.parser
+            .consume(TokenType::CloseCurly, "Expected '}' after block.");
+    }
 }
 
 /// Compiles an Elysabettian source code expression into a bytecode `Chunk`.
@@ -524,7 +559,11 @@ mod tests {
                 | Opcode::SetProperty
                 | Opcode::GetSuper
                 | Opcode::ArrayBuild => 2,
-                Opcode::Jump | Opcode::JumpIfFalse | Opcode::Loop | Opcode::Invoke | Opcode::SuperInvoke => 3,
+                Opcode::Jump
+                | Opcode::JumpIfFalse
+                | Opcode::Loop
+                | Opcode::Invoke
+                | Opcode::SuperInvoke => 3,
                 _ => 1,
             };
         }
@@ -586,8 +625,23 @@ mod tests {
         assert_eq!(extract_opcodes(&chunk), expected_opcodes);
 
         // Check numeric values
-        assert!(chunk.constants.iter().any(|c| c.is_number() && c.as_number() == 10.0));
-        assert!(chunk.constants.iter().any(|c| c.is_number() && c.as_number() == 5.0));
-        assert!(chunk.constants.iter().any(|c| c.is_number() && c.as_number() == 20.0));
+        assert!(
+            chunk
+                .constants
+                .iter()
+                .any(|c| c.is_number() && c.as_number() == 10.0)
+        );
+        assert!(
+            chunk
+                .constants
+                .iter()
+                .any(|c| c.is_number() && c.as_number() == 5.0)
+        );
+        assert!(
+            chunk
+                .constants
+                .iter()
+                .any(|c| c.is_number() && c.as_number() == 20.0)
+        );
     }
 }
