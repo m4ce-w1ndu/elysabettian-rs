@@ -536,6 +536,8 @@ mod tests {
         let mut interner = StringInterner::new();
         let chunk = compile("1 + 2 * 3;", &mut interner).expect("Compilation failed.");
 
+        ely_core::debug::disassemble_chunk(&chunk, "test_math");
+
         let expected_opcodes = vec![
             Opcode::Constant, // 1
             Opcode::Constant, // 2
@@ -559,6 +561,8 @@ mod tests {
         let mut interner = StringInterner::new();
         let source = "var x = 10; print x + 5; x = 20;";
         let chunk = compile(source, &mut interner).expect("Compilation failed.");
+
+        ely_core::debug::disassemble_chunk(&chunk, "test_variables");
 
         // Check "x" variable interning
         let x_id = interner.intern("x");
