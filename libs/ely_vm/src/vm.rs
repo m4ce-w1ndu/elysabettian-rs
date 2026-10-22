@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::heap::HeapObject;
 use ely_core::chunk::Chunk;
 use ely_core::opcode::Opcode;
 use ely_core::value::Value;
@@ -20,6 +21,7 @@ pub struct VM<'a> {
     pub frames: Vec<CallFrame<'a>>,
     pub globals: HashMap<u32, Value>,
     pub natives: HashMap<u32, NativeFn>,
+    pub heap: Vec<HeapObject>,
 }
 
 impl<'a> VM<'a> {
@@ -30,6 +32,7 @@ impl<'a> VM<'a> {
             frames: Vec::with_capacity(64),
             globals: HashMap::new(),
             natives: HashMap::new(),
+            heap: Vec::new(),
         }
     }
 
@@ -44,6 +47,7 @@ impl<'a> VM<'a> {
     pub fn reset_stack(&mut self) {
         self.stack.clear();
         self.frames.clear();
+        self.heap.clear();
     }
 
     /// Pushes a value onto the virtual machine stack.
@@ -63,6 +67,31 @@ impl<'a> VM<'a> {
 
     pub fn define_native(&mut self, name_id: u32, function: NativeFn) {
         self.natives.insert(name_id, function);
+    }
+
+    /// Allocates an object on the heap and returns a NaN-boxed Value reference.
+    pub fn allocate_object(&mut self, object: HeapObject) -> Value {
+        let id = self.heap.len();
+        self.heap.push(object);
+        Value::obj(id as u64)
+    }
+
+    /// Retrieves an immutable reference to a heap object.
+    pub fn get_object(&self, value: Value) -> Option<&HeapObject> {
+        if !value.is_obj() {
+            return None;
+        }
+        let id = value.as_obj() as usize;
+        self.heap.get(id)
+    }
+
+    /// Retrieves a mutable reference to a heap object.
+    pub fn get_object_mut(&mut self, value: Value) -> Option<&mut HeapObject> {
+        if !value.is_obj() {
+            return None;
+        }
+        let id = value.as_obj() as usize;
+        self.heap.get_mut(id)
     }
 
     fn run(&mut self) -> InterpretResult {
@@ -251,6 +280,56 @@ impl<'a> VM<'a> {
                     let value = self.pop();
                     println!("{}", value);
                 }
+                Opcode::ArrayBuild => {
+                    let count = self.frames[frame_idx].read_byte() as usize;
+                    let start = self.stack.len() - count;
+                    let elements = self.stack.split_off(start);
+                    let obj = self.allocate_object(HeapObject::Array(elements));
+                    self.push(obj);
+                }
+                Opcode::ArrayIndex => {
+                    let index_value = self.pop();
+                    let array_value = self.pop();
+
+                    if !index_value.is_number() {
+                        return InterpretResult::RuntimeError;
+                    }
+
+                    let idx = index_value.as_number() as usize;
+                    match self.get_object(array_value) {
+                        Some(HeapObject::Array(elements)) => {
+                            if idx >= elements.len() {
+                                return InterpretResult::RuntimeError;
+                            }
+
+                            let item = elements[idx];
+                            self.push(item);
+                        }
+                        _ => return InterpretResult::RuntimeError,
+                    }
+                }
+                Opcode::ArrayStore => {
+                    let val = self.pop();
+                    let index_value = self.pop();
+                    let array_value = self.pop();
+
+                    if !index_value.is_number() {
+                        return InterpretResult::RuntimeError;
+                    }
+
+                    let idx = index_value.as_number() as usize;
+                    match self.get_object_mut(array_value) {
+                        Some(HeapObject::Array(elements)) => {
+                            if idx >= elements.len() {
+                                return InterpretResult::RuntimeError;
+                            }
+
+                            elements[idx] = val;
+                            self.push(val);
+                        }
+                        _ => return InterpretResult::RuntimeError,
+                    }
+                }
                 _ => return InterpretResult::RuntimeError,
             }
         }
@@ -317,6 +396,7 @@ impl<'a> CallFrame<'a> {
         self.chunk.constants[index as usize]
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -588,6 +668,50 @@ mod tests {
 
         // ~8 = -9
         chunk.write_byte(Opcode::BwNot as u8, 1);
+        chunk.write_byte(Opcode::Return as u8, 1);
+
+        let mut vm = VM::new();
+        let status = vm.interpret(&chunk);
+        assert_eq!(status, InterpretResult::Ok);
+    }
+
+    #[test]
+    fn test_vm_interpret_arrays_build_index_store() {
+        // [10, 20, 30] in local slot 0
+        let mut chunk = Chunk::new();
+        let c10 = chunk.add_constant(Value::number(10.0));
+        let c20 = chunk.add_constant(Value::number(20.0));
+        let c30 = chunk.add_constant(Value::number(30.0));
+        let c1 = chunk.add_constant(Value::number(1.0));
+        let c99 = chunk.add_constant(Value::number(99.0));
+
+        // push 10, 20, 30
+        chunk.write_byte(Opcode::Constant as u8, 1);
+        chunk.write_byte(c10 as u8, 1);
+        chunk.write_byte(Opcode::Constant as u8, 1);
+        chunk.write_byte(c20 as u8, 1);
+        chunk.write_byte(Opcode::Constant as u8, 1);
+        chunk.write_byte(c30 as u8, 1);
+        // build array (now on top of stack at local slot 0)
+        chunk.write_byte(Opcode::ArrayBuild as u8, 1);
+        chunk.write_byte(3, 1);
+
+        // arr[1] = 99: stack needs: arr, 1, 99
+        chunk.write_byte(Opcode::GetLocal as u8, 1);
+        chunk.write_byte(0, 1);
+        chunk.write_byte(Opcode::Constant as u8, 1);
+        chunk.write_byte(c1 as u8, 1);
+        chunk.write_byte(Opcode::Constant as u8, 1);
+        chunk.write_byte(c99 as u8, 1);
+        chunk.write_byte(Opcode::ArrayStore as u8, 1);
+        chunk.write_byte(Opcode::Pop as u8, 1);
+
+        // retrieve arr[1]: stack needs: arr, 1
+        chunk.write_byte(Opcode::GetLocal as u8, 1);
+        chunk.write_byte(0, 1);
+        chunk.write_byte(Opcode::Constant as u8, 1);
+        chunk.write_byte(c1 as u8, 1);
+        chunk.write_byte(Opcode::ArrayIndex as u8, 1);
         chunk.write_byte(Opcode::Return as u8, 1);
 
         let mut vm = VM::new();
