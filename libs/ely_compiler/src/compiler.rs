@@ -2,7 +2,7 @@ use crate::scanner::Scanner;
 use crate::token::{Token, TokenType};
 use ely_core::chunk::Chunk;
 use ely_core::interner::StringInterner;
-use ely_core::opcode::Opcode::{self, SetGlobal};
+use ely_core::opcode::Opcode;
 use ely_core::value::Value;
 
 /// Expression precedence levels ordered from lowest to highest for Pratt parsing.
@@ -348,6 +348,8 @@ impl<'a> Compiler<'a> {
             self.end_scope();
         } else if self.parser.match_token(TokenType::Print) {
             self.print_statement();
+        } else if self.parser.match_token(TokenType::If) {
+            self.if_statement();
         } else {
             self.expression_statement();
         }
@@ -625,6 +627,34 @@ impl<'a> Compiler<'a> {
         self.emit_byte(((jump >> 8) & 0xff) as u8);
         self.emit_byte((jump & 0xff) as u8);
     }
+
+    /// Compiles an `if` conditional statement with an optional `else` branch.
+    ///
+    /// Emits a conditional jump (`JumpIfFalse`) to skip the *then* block if the condition
+    /// is falsey, and an unconditional jump (`Jump`) at the end of the *then* block to skip
+    /// the *else* block. Both branches pop the evaluated condition value off the VM stack.
+    fn if_statement(&mut self) {
+        self.parser
+            .consume(TokenType::OpenParen, "Expected '(' after 'if'.");
+        self.expression();
+        self.parser
+            .consume(TokenType::CloseParen, "Expected ')' after condition.");
+
+        let then_jump = self.emit_jump(Opcode::JumpIfFalse);
+        self.emit_opcode(Opcode::Pop);
+        self.statement();
+
+        let else_jump = self.emit_jump(Opcode::Jump);
+        self.patch_jump(then_jump);
+
+        self.emit_opcode(Opcode::Pop);
+
+        if self.parser.match_token(TokenType::Else) {
+            self.statement();
+        }
+
+        self.patch_jump(else_jump);
+    }
 }
 
 /// Compiles an Elysabettian source code expression into a bytecode `Chunk`.
@@ -791,6 +821,37 @@ mod tests {
             Opcode::Pop,      // statement pop
             Opcode::Pop,      // end_scope pops local b off stack!
             Opcode::Nop,      // implicit return null
+            Opcode::Return,
+        ];
+
+        assert_eq!(extract_opcodes(&chunk), expected_opcodes);
+    }
+
+    #[test]
+    fn test_compile_if_statement() {
+        let mut interner = StringInterner::new();
+        let source = r#"
+            if (true) {
+                print 1;
+            } else {
+                print 2;
+            }
+        "#;
+        let chunk = compile(source, &mut interner).expect("Compilation failed.");
+
+        ely_core::debug::disassemble_chunk(&chunk, "test_if_statement");
+
+        let expected_opcodes = vec![
+            Opcode::True,
+            Opcode::JumpIfFalse,
+            Opcode::Pop,
+            Opcode::Constant, // 1
+            Opcode::Print,
+            Opcode::Jump,
+            Opcode::Pop,
+            Opcode::Constant, // 2
+            Opcode::Print,
+            Opcode::Nop,
             Opcode::Return,
         ];
 
