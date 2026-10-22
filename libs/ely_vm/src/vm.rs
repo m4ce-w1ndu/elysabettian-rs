@@ -59,8 +59,8 @@ impl<'a> VM<'a> {
 
     fn run(&mut self) -> InterpretResult {
         loop {
-            let frame = self.frames.last_mut().expect("No active frame.");
-            let instruction = frame.read_byte();
+            let frame_idx = self.frames.len() - 1;
+            let instruction = self.frames[frame_idx].read_byte();
 
             let opcode = match Opcode::try_from(instruction) {
                 Ok(op) => op,
@@ -69,7 +69,7 @@ impl<'a> VM<'a> {
 
             match opcode {
                 Opcode::Constant => {
-                    let value = frame.read_constant();
+                    let value = self.frames[frame_idx].read_constant();
                     self.push(value);
                 }
                 Opcode::True => self.push(Value::bool(true)),
@@ -135,12 +135,12 @@ impl<'a> VM<'a> {
                     self.push(Value::bool(a < b));
                 }
                 Opcode::DefineGlobal => {
-                    let name_id = frame.read_constant().as_obj() as u32;
+                    let name_id = self.frames[frame_idx].read_constant().as_obj() as u32;
                     let val = self.pop();
                     self.globals.insert(name_id, val);
                 }
                 Opcode::GetGlobal => {
-                    let name_id = frame.read_constant().as_obj() as u32;
+                    let name_id = self.frames[frame_idx].read_constant().as_obj() as u32;
                     if let Some(val) = self.globals.get(&name_id) {
                         self.push(*val);
                     } else {
@@ -148,7 +148,7 @@ impl<'a> VM<'a> {
                     }
                 }
                 Opcode::SetGlobal => {
-                    let name_id = frame.read_constant().as_obj() as u32;
+                    let name_id = self.frames[frame_idx].read_constant().as_obj() as u32;
                     if !self.globals.contains_key(&name_id) {
                         return InterpretResult::RuntimeError;
                     }
@@ -156,15 +156,34 @@ impl<'a> VM<'a> {
                     self.globals.insert(name_id, value);
                 }
                 Opcode::GetLocal => {
-                    let slot = frame.read_byte() as usize;
-                    let value = self.stack[frame.slots + slot];
+                    let slot = self.frames[frame_idx].read_byte() as usize;
+                    let value = self.stack[self.frames[frame_idx].slots + slot];
                     self.push(value);
                 }
                 Opcode::SetLocal => {
-                    let slot = frame.read_byte() as usize;
-                    let idx = frame.slots + slot;
+                    let slot = self.frames[frame_idx].read_byte() as usize;
+                    let idx = self.frames[frame_idx].slots + slot;
                     let value = self.peek(0);
                     self.stack[idx] = value;
+                }
+                Opcode::Jump => {
+                    let offset = self.frames[frame_idx].read_short();
+                    self.frames[frame_idx].ip += offset as usize;
+                }
+                Opcode::JumpIfFalse => {
+                    let is_falsy = {
+                        let val = self.peek(0);
+                        val.is_null() || (val.is_bool() && !val.as_bool())
+                    };
+
+                    let offset = self.frames[frame_idx].read_short();
+                    if is_falsy {
+                        self.frames[frame_idx].ip += offset as usize;
+                    }
+                }
+                Opcode::Loop => {
+                    let offset = self.frames[frame_idx].read_short();
+                    self.frames[frame_idx].ip -= offset as usize;
                 }
                 _ => return InterpretResult::RuntimeError,
             }
@@ -391,5 +410,38 @@ mod tests {
 
         assert_eq!(result, InterpretResult::Ok);
         assert_eq!(vm.globals.get(&100).unwrap().as_number(), 25.0);
+    }
+
+    #[test]
+    fn test_vm_interpret_loops_and_jumps() {
+        // Compile a real while loop from source through ely_compiler!
+        // var sum = 0;
+        // var i = 0;
+        // while (i < 5) {
+        //     sum = sum + i;
+        //     i = i + 1;
+        // }
+        use ely_core::interner::StringInterner;
+        let mut interner = StringInterner::new();
+        let source = r#"
+            var sum = 0;
+            var i = 0;
+            while (i < 5) {
+                sum = sum + i;
+                i = i + 1;
+            }
+        "#;
+        let chunk =
+            ely_compiler::compiler::compile(source, &mut interner).expect("Compilation failed.");
+
+        let mut vm = VM::new();
+        let result = vm.interpret(&chunk);
+
+        assert_eq!(result, InterpretResult::Ok);
+
+        let sum_id = interner.intern("sum");
+        let sum_val = vm.globals.get(&sum_id).expect("sum global not found.");
+        // sum = 0 + 1 + 2 + 3 + 4 = 10
+        assert_eq!(sum_val.as_number(), 10.0);
     }
 }
