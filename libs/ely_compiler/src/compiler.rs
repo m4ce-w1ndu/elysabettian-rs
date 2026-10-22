@@ -350,3 +350,18 @@ pub fn compile(source: &str, interner: &mut StringInterner) -> Option<Chunk> {
         Some(compiler.chunk)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ely_core::debug::disassemble_chunk;
+
+    #[test]
+    fn test_compile_math_expression() {
+        let mut interner = StringInterner::new();
+        let chunk = compile("1 + 2 * 3", &mut interner).expect("Compilation failed.");
+
+        disassemble_chunk(&chunk, "test_math");
+        assert_eq!(chunk.constants.len(), 3);
+    }
+}
