@@ -314,6 +314,7 @@ impl<'a> Compiler<'a> {
             match self.parser.previous.token_type {
                 TokenType::And => self.and(),
                 TokenType::Or => self.or(),
+                TokenType::OpenParen => self.call(),
                 _ => self.binary(),
             }
         }
@@ -340,6 +341,7 @@ impl<'a> Compiler<'a> {
             | TokenType::ShiftRight => Precedence::Term,
             TokenType::And => Precedence::And,
             TokenType::Or => Precedence::Or,
+            TokenType::OpenParen => Precedence::Call,
             _ => Precedence::None,
         }
     }
@@ -759,6 +761,40 @@ impl<'a> Compiler<'a> {
         self.parse_precedence(Precedence::Or);
         self.patch_jump(end_jump);
     }
+
+    /// Parses a comma-separated argument list enclosed in parentheses.
+    fn argument_list(&mut self) -> u8 {
+        let mut arg_count = 0u8;
+
+        if !self.parser.check(TokenType::CloseParen) {
+            loop {
+                self.expression();
+
+                if arg_count == 255 {
+                    self.parser.error("Cannot have more than 255 arguments.");
+                    return 0;
+                }
+
+                arg_count += 1;
+
+                if !self.parser.match_token(TokenType::Comma) {
+                    break;
+                }
+            }
+        }
+
+        self.parser
+            .consume(TokenType::CloseParen, "Expected ')' after arguments.");
+
+        arg_count
+    }
+
+    /// Compiles a function call expression.
+    fn call(&mut self) {
+        let arg_count = self.argument_list();
+        self.emit_opcode(Opcode::Call);
+        self.emit_byte(arg_count);
+    }
 }
 
 /// Compiles an Elysabettian source code expression into a bytecode `Chunk`.
@@ -1059,14 +1095,40 @@ mod tests {
             Opcode::True,
             // or starts
             Opcode::JumpIfFalse,
-            Opcode::Jump,        // short-circuit or
+            Opcode::Jump, // short-circuit or
             Opcode::Pop,
-            Opcode::Constant,    // 42
-            Opcode::Pop,         // statement pop
+            Opcode::Constant, // 42
+            Opcode::Pop,      // statement pop
             Opcode::Nop,
             Opcode::Return,
         ];
 
         assert_eq!(extract_opcodes(&chunk), expected_opcodes);
+    }
+
+    #[test]
+    fn test_compile_call_expression() {
+        let mut interner = StringInterner::new();
+        let source = "foo(1, 2 + 3);";
+        let chunk = compile(source, &mut interner).expect("Compilation failed.");
+
+        ely_core::debug::disassemble_chunk(&chunk, "test_call_expression");
+
+        let expected_opcodes = vec![
+            Opcode::GetGlobal, // foo
+            Opcode::Constant,  // 1
+            Opcode::Constant,  // 2
+            Opcode::Constant,  // 3
+            Opcode::Add,
+            Opcode::Call,      // argc = 2
+            Opcode::Pop,       // statement pop
+            Opcode::Nop,
+            Opcode::Return,
+        ];
+
+        assert_eq!(extract_opcodes(&chunk), expected_opcodes);
+        // check argc operand of Opcode::Call
+        let call_idx = chunk.code.iter().position(|&b| b == Opcode::Call as u8).unwrap();
+        assert_eq!(chunk.code[call_idx + 1], 2);
     }
 }
