@@ -197,4 +197,92 @@ impl<'a> Compiler<'a> {
         self.emit_opcode(Opcode::Constant);
         self.emit_byte(index as u8);
     }
+
+    fn expression(&mut self) {
+        todo!();
+    }
+
+    fn number(&mut self) {
+        let value: f64 = self.parser.previous.lexeme.parse().unwrap_or(0.0);
+        let value = Value::number(value);
+        self.emit_constant(value);
+    }
+
+    /// Parses an expression that starts with a grouping open parenthesis.
+    fn grouping(&mut self) {
+        self.expression();
+        self.parser
+            .consume(TokenType::CloseParen, "Expected ')' after expression.");
+    }
+
+    /// Parses an expression starting with a unary prefix operator.
+    fn unary(&mut self) {
+        let operator_type = self.parser.previous.token_type;
+        self.parse_precedence(Precedence::Unary);
+
+        match operator_type {
+            TokenType::Minus => self.emit_opcode(Opcode::Negate),
+            TokenType::Negate => self.emit_opcode(Opcode::Not),
+            TokenType::BwNot => self.emit_opcode(Opcode::BwNot),
+            _ => (),
+        }
+    }
+
+    /// Parses an infix binary expression and emits the corresponding opcode.
+    fn binary(&mut self) {
+        let operator_type = self.parser.previous.token_type;
+        let precedence = Self::get_precedence(operator_type);
+        self.parse_precedence(precedence.next());
+
+        match operator_type {
+            TokenType::Plus => self.emit_opcode(Opcode::Add),
+            TokenType::Minus => self.emit_opcode(Opcode::Subtract),
+            TokenType::Multiply => self.emit_opcode(Opcode::Multiply),
+            TokenType::Divide => self.emit_opcode(Opcode::Divide),
+            TokenType::Equality => self.emit_opcode(Opcode::Equal),
+            TokenType::NonEquality => {
+                self.emit_opcode(Opcode::Equal);
+                self.emit_opcode(Opcode::Not);
+            }
+            TokenType::GreaterThan => self.emit_opcode(Opcode::Greater),
+            TokenType::LessThan => self.emit_opcode(Opcode::Less),
+            TokenType::GreaterThanEqual => {
+                self.emit_opcode(Opcode::Less);
+                self.emit_opcode(Opcode::Not);
+            }
+            TokenType::LessThanEqual => {
+                self.emit_opcode(Opcode::Greater);
+                self.emit_opcode(Opcode::Not);
+            }
+            TokenType::BwAnd => self.emit_opcode(Opcode::BwAnd),
+            TokenType::BwOr => self.emit_opcode(Opcode::BwOr),
+            TokenType::BwXor => self.emit_opcode(Opcode::BwXor),
+            TokenType::ShiftLeft => self.emit_opcode(Opcode::ShiftLeft),
+            TokenType::ShiftRight => self.emit_opcode(Opcode::ShiftRight),
+            _ => (),
+        }
+    }
+
+    fn parse_precedence(&mut self, precedence: Precedence) {
+        todo!();
+    }
+
+    /// Resolves the infix precedence level associated with a token type.
+    fn get_precedence(token_type: TokenType) -> Precedence {
+        match token_type {
+            TokenType::Multiply | TokenType::Divide => Precedence::Factor,
+            TokenType::Plus | TokenType::Minus => Precedence::Term,
+            TokenType::LessThan
+            | TokenType::LessThanEqual
+            | TokenType::GreaterThan
+            | TokenType::GreaterThanEqual => Precedence::Comparison,
+            TokenType::Equality | TokenType::NonEquality => Precedence::Equality,
+            TokenType::BwOr
+            | TokenType::BwXor
+            | TokenType::BwAnd
+            | TokenType::ShiftLeft
+            | TokenType::ShiftRight => Precedence::Term,
+            _ => Precedence::None,
+        }
+    }
 }
