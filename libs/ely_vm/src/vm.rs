@@ -116,6 +116,41 @@ impl<'a> VM<'a> {
                     let n = self.pop().as_number();
                     self.push(Value::number(-n));
                 }
+                Opcode::BwAnd => {
+                    if !self.binary_op(|a, b| (a as i64 & b as i64) as f64) {
+                        return InterpretResult::RuntimeError;
+                    }
+                }
+                Opcode::BwOr => {
+                    if !self.binary_op(|a, b| (a as i64 | b as i64) as f64) {
+                        return InterpretResult::RuntimeError;
+                    }
+                }
+                Opcode::BwXor => {
+                    if !self.binary_op(|a, b| (a as i64 ^ b as i64) as f64) {
+                        return InterpretResult::RuntimeError;
+                    }
+                }
+                Opcode::ShiftLeft => {
+                    if !self.binary_op(|a, b| ((a as i64) << (b as i64)) as f64) {
+                        return InterpretResult::RuntimeError;
+                    }
+                }
+                Opcode::ShiftRight => {
+                    if !self.binary_op(|a, b| ((a as i64) >> (b as i64)) as f64) {
+                        return InterpretResult::RuntimeError;
+                    }
+                }
+                Opcode::BwNot => {
+                    let a = self.pop();
+
+                    if !a.is_number() {
+                        return InterpretResult::RuntimeError;
+                    }
+
+                    let a = a.as_number() as i64;
+                    self.push(Value::number((!a) as f64));
+                }
                 Opcode::Not => {
                     let value = self.pop();
                     let is_falsy = value.is_null() || (value.is_bool() && !value.as_bool());
@@ -211,6 +246,10 @@ impl<'a> VM<'a> {
                     } else {
                         return InterpretResult::RuntimeError;
                     }
+                }
+                Opcode::Print => {
+                    let value = self.pop();
+                    println!("{}", value);
                 }
                 _ => return InterpretResult::RuntimeError,
             }
@@ -498,7 +537,61 @@ mod tests {
         assert_eq!(status, InterpretResult::Ok);
 
         let result_id = interner.intern("result");
-        let result_val = vm.globals.get(&result_id).expect("result global not found.");
+        let result_val = vm
+            .globals
+            .get(&result_id)
+            .expect("result global not found.");
         assert_eq!(result_val.as_number(), 42.0);
+    }
+
+    #[test]
+    fn test_vm_interpret_bitwise_operators() {
+        let mut chunk = Chunk::new();
+        // (12 & 10) | (1 << 2) ^ (16 >> 2)
+        // 12 & 10 = 8
+        // 1 << 2 = 4
+        // 8 | 4 = 12
+        // 16 >> 2 = 4
+        // 12 ^ 4 = 8
+        let c12 = chunk.add_constant(Value::number(12.0));
+        let c10 = chunk.add_constant(Value::number(10.0));
+        let c1 = chunk.add_constant(Value::number(1.0));
+        let c2 = chunk.add_constant(Value::number(2.0));
+        let c16 = chunk.add_constant(Value::number(16.0));
+
+        // 12 & 10
+        chunk.write_byte(Opcode::Constant as u8, 1);
+        chunk.write_byte(c12 as u8, 1);
+        chunk.write_byte(Opcode::Constant as u8, 1);
+        chunk.write_byte(c10 as u8, 1);
+        chunk.write_byte(Opcode::BwAnd as u8, 1);
+
+        // 1 << 2
+        chunk.write_byte(Opcode::Constant as u8, 1);
+        chunk.write_byte(c1 as u8, 1);
+        chunk.write_byte(Opcode::Constant as u8, 1);
+        chunk.write_byte(c2 as u8, 1);
+        chunk.write_byte(Opcode::ShiftLeft as u8, 1);
+
+        // |
+        chunk.write_byte(Opcode::BwOr as u8, 1);
+
+        // 16 >> 2
+        chunk.write_byte(Opcode::Constant as u8, 1);
+        chunk.write_byte(c16 as u8, 1);
+        chunk.write_byte(Opcode::Constant as u8, 1);
+        chunk.write_byte(c2 as u8, 1);
+        chunk.write_byte(Opcode::ShiftRight as u8, 1);
+
+        // ^
+        chunk.write_byte(Opcode::BwXor as u8, 1);
+
+        // ~8 = -9
+        chunk.write_byte(Opcode::BwNot as u8, 1);
+        chunk.write_byte(Opcode::Return as u8, 1);
+
+        let mut vm = VM::new();
+        let status = vm.interpret(&chunk);
+        assert_eq!(status, InterpretResult::Ok);
     }
 }
