@@ -350,6 +350,8 @@ impl<'a> Compiler<'a> {
             self.print_statement();
         } else if self.parser.match_token(TokenType::If) {
             self.if_statement();
+        } else if self.parser.match_token(TokenType::While) {
+            self.while_statement();
         } else {
             self.expression_statement();
         }
@@ -655,6 +657,28 @@ impl<'a> Compiler<'a> {
 
         self.patch_jump(else_jump);
     }
+
+    /// Compiles a `while` loop statement.
+    ///
+    /// Records the offset before condition evaluation, emits a conditional jump (`JumpIfFalse`)
+    /// to exit when false, emits the loop body, loops backwards to the condition with `Loop`,
+    /// and patches the exit jump.
+    fn while_statement(&mut self) {
+        let loop_start = self.chunk.count();
+        self.parser
+            .consume(TokenType::OpenParen, "Expected '(' before while condition.");
+        self.expression();
+        self.parser
+            .consume(TokenType::CloseParen, "Expected ')' after while condition.");
+
+        let exit_jump = self.emit_jump(Opcode::JumpIfFalse);
+        self.emit_opcode(Opcode::Pop);
+        self.statement();
+        self.emit_loop(loop_start);
+
+        self.patch_jump(exit_jump);
+        self.emit_opcode(Opcode::Pop);
+    }
 }
 
 /// Compiles an Elysabettian source code expression into a bytecode `Chunk`.
@@ -851,6 +875,45 @@ mod tests {
             Opcode::Pop,
             Opcode::Constant, // 2
             Opcode::Print,
+            Opcode::Nop,
+            Opcode::Return,
+        ];
+
+        assert_eq!(extract_opcodes(&chunk), expected_opcodes);
+    }
+
+    #[test]
+    fn test_compile_while_statement() {
+        let mut interner = StringInterner::new();
+        let source = r#"
+            var i = 0;
+            while (i < 3) {
+                print i;
+                i = i + 1;
+            }
+        "#;
+        let chunk = compile(source, &mut interner).expect("Compilation failed.");
+
+        ely_core::debug::disassemble_chunk(&chunk, "test_while_statement");
+
+        let expected_opcodes = vec![
+            Opcode::Constant,     // 0
+            Opcode::DefineGlobal, // 'i'
+            // --- Loop start ---
+            Opcode::GetGlobal,    // i
+            Opcode::Constant,     // 3
+            Opcode::Less,
+            Opcode::JumpIfFalse,  // exit jump
+            Opcode::Pop,          // pop condition (true)
+            Opcode::GetGlobal,    // i
+            Opcode::Print,
+            Opcode::GetGlobal,    // i
+            Opcode::Constant,     // 1
+            Opcode::Add,
+            Opcode::SetGlobal,    // i
+            Opcode::Pop,          // expression statement pop
+            Opcode::Loop,         // back to loop start
+            Opcode::Pop,          // exit pop condition (false)
             Opcode::Nop,
             Opcode::Return,
         ];
