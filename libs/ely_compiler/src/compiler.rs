@@ -325,6 +325,31 @@ impl<'a> Compiler<'a> {
             _ => Precedence::None,
         }
     }
+
+    /// Dispatches and compiles a single statement.
+    fn statement(&mut self) {
+        if self.parser.match_token(TokenType::Print) {
+            self.print_statement();
+        } else {
+            self.expression_statement();
+        }
+    }
+
+    /// Parses a `print <expr>;` statement and emits `Opcode::Print`.
+    fn print_statement(&mut self) {
+        self.expression();
+        self.parser
+            .consume(TokenType::Semicolon, "Expected ';' after value.");
+        self.emit_opcode(Opcode::Print);
+    }
+
+    /// Parses an expression statement and emits `Opcode::Pop` to discard the evaluation result.
+    fn expression_statement(&mut self) {
+        self.expression();
+        self.parser
+            .consume(TokenType::Semicolon, "Expected ';' after expression.");
+        self.emit_opcode(Opcode::Pop);
+    }
 }
 
 /// Compiles an Elysabettian source code expression into a bytecode `Chunk`.
