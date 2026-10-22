@@ -120,4 +120,20 @@ impl<'a> Scanner<'a> {
 
         self.make_token(TokenType::String)
     }
+
+    /// Scans a numeric literal (integer or floating-point with fractional part).
+    fn number(&mut self) -> Token<'a> {
+        while self.peek().is_ascii_digit() {
+            _ = self.advance();
+        }
+
+        if self.peek() == '.' && self.peek_next().is_ascii_digit() {
+            _ = self.advance();
+            while self.peek().is_ascii_digit() {
+                _ = self.advance();
+            }
+        }
+
+        self.make_token(TokenType::Number)
+    }
 }
