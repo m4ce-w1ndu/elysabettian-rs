@@ -80,9 +80,56 @@ impl<'a> VM<'a> {
                     self.pop();
                     return InterpretResult::Ok;
                 }
+                Opcode::Add => {
+                    if !self.binary_op(|a, b| a + b) {
+                        return InterpretResult::RuntimeError;
+                    }
+                }
+                Opcode::Subtract => {
+                    if !self.binary_op(|a, b| a - b) {
+                        return InterpretResult::RuntimeError;
+                    }
+                }
+                Opcode::Multiply => {
+                    if !self.binary_op(|a, b| a * b) {
+                        return InterpretResult::RuntimeError;
+                    }
+                }
+                Opcode::Divide => {
+                    if !self.binary_op(|a, b| a / b) {
+                        return InterpretResult::RuntimeError;
+                    }
+                }
+                Opcode::Negate => {
+                    if !self.peek(0).is_number() {
+                        return InterpretResult::RuntimeError;
+                    }
+
+                    let n = self.pop().as_number();
+                    self.push(Value::number(-n));
+                }
+                Opcode::Not => {
+                    let value = self.pop();
+                    let is_falsy = value.is_null() || (value.is_bool() && !value.as_bool());
+                    self.push(Value::bool(is_falsy));
+                }
                 _ => return InterpretResult::RuntimeError,
             }
         }
+    }
+
+    fn binary_op<F>(&mut self, op: F) -> bool
+    where
+        F: FnOnce(f64, f64) -> f64,
+    {
+        if !self.peek(0).is_number() || !self.peek(1).is_number() {
+            return false;
+        }
+
+        let b = self.pop().as_number();
+        let a = self.pop().as_number();
+        self.push(Value::number(op(a, b)));
+        true
     }
 }
 
@@ -180,6 +227,35 @@ mod tests {
         chunk.write_byte(Opcode::Pop as u8, 1);
         chunk.write_byte(Opcode::Pop as u8, 1);
         // return 42.0
+        chunk.write_byte(Opcode::Return as u8, 1);
+
+        let mut vm = VM::new();
+        let result = vm.interpret(&chunk);
+
+        assert_eq!(result, InterpretResult::Ok);
+    }
+
+    #[test]
+    fn test_vm_interpret_arithmetic_and_negate() {
+        let mut chunk = Chunk::new();
+        // 5 + 3 * 2 = 11
+        let c1 = chunk.add_constant(Value::number(5.0));
+        let c2 = chunk.add_constant(Value::number(3.0));
+        let c3 = chunk.add_constant(Value::number(2.0));
+
+        chunk.write_byte(Opcode::Constant as u8, 1);
+        chunk.write_byte(c1 as u8, 1);
+
+        chunk.write_byte(Opcode::Constant as u8, 1);
+        chunk.write_byte(c2 as u8, 1);
+
+        chunk.write_byte(Opcode::Constant as u8, 1);
+        chunk.write_byte(c3 as u8, 1);
+
+        chunk.write_byte(Opcode::Multiply as u8, 1);
+        chunk.write_byte(Opcode::Add as u8, 1);
+        chunk.write_byte(Opcode::Negate as u8, 1);
+        // stack top is -11.0, return it
         chunk.write_byte(Opcode::Return as u8, 1);
 
         let mut vm = VM::new();
