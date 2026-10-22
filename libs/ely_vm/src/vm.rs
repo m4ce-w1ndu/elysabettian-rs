@@ -12,11 +12,14 @@ pub enum InterpretResult {
     RuntimeError,
 }
 
+pub type NativeFn = fn(arg_count: u8, args: &[Value]) -> Value;
+
 /// The virtual machine responsible for executing compiled bytecode chunks.
 pub struct VM<'a> {
     pub stack: Vec<Value>,
     pub frames: Vec<CallFrame<'a>>,
     pub globals: HashMap<u32, Value>,
+    pub natives: HashMap<u32, NativeFn>,
 }
 
 impl<'a> VM<'a> {
@@ -26,6 +29,7 @@ impl<'a> VM<'a> {
             stack: Vec::with_capacity(256),
             frames: Vec::with_capacity(64),
             globals: HashMap::new(),
+            natives: HashMap::new(),
         }
     }
 
@@ -55,6 +59,10 @@ impl<'a> VM<'a> {
     /// Peeks a value at the specified distance from the top of the stack.
     pub fn peek(&self, distance: usize) -> Value {
         self.stack[self.stack.len() - 1 - distance]
+    }
+
+    pub fn define_native(&mut self, name_id: u32, function: NativeFn) {
+        self.natives.insert(name_id, function);
     }
 
     fn run(&mut self) -> InterpretResult {
@@ -184,6 +192,25 @@ impl<'a> VM<'a> {
                 Opcode::Loop => {
                     let offset = self.frames[frame_idx].read_short();
                     self.frames[frame_idx].ip -= offset as usize;
+                }
+                Opcode::Call => {
+                    let arg_count = self.frames[frame_idx].read_byte() as usize;
+                    let callee = self.peek(arg_count);
+
+                    if callee.is_obj() {
+                        let name_id = callee.as_obj() as u32;
+                        if let Some(&native_fn) = self.natives.get(&name_id) {
+                            let args_start = self.stack.len() - arg_count;
+                            let result = native_fn(arg_count as u8, &self.stack[args_start..]);
+                            // Remove args and callee
+                            self.stack.truncate(args_start - 1);
+                            self.push(result);
+                        } else {
+                            return InterpretResult::RuntimeError;
+                        }
+                    } else {
+                        return InterpretResult::RuntimeError;
+                    }
                 }
                 _ => return InterpretResult::RuntimeError,
             }
@@ -443,5 +470,35 @@ mod tests {
         let sum_val = vm.globals.get(&sum_id).expect("sum global not found.");
         // sum = 0 + 1 + 2 + 3 + 4 = 10
         assert_eq!(sum_val.as_number(), 10.0);
+    }
+
+    #[test]
+    fn test_vm_interpret_native_function_call() {
+        use ely_core::interner::StringInterner;
+        let mut interner = StringInterner::new();
+
+        // Native function that adds two numbers
+        fn native_add(_argc: u8, args: &[Value]) -> Value {
+            let a = args[0].as_number();
+            let b = args[1].as_number();
+            Value::number(a + b)
+        }
+
+        let mut vm = VM::new();
+        let add_id = interner.intern("add");
+        // Register native function and expose as global variable
+        vm.define_native(add_id, native_add);
+        vm.globals.insert(add_id, Value::obj(add_id as u64));
+
+        let source = "var result = add(10, 32);";
+        let chunk =
+            ely_compiler::compiler::compile(source, &mut interner).expect("Compilation failed.");
+
+        let status = vm.interpret(&chunk);
+        assert_eq!(status, InterpretResult::Ok);
+
+        let result_id = interner.intern("result");
+        let result_val = vm.globals.get(&result_id).expect("result global not found.");
+        assert_eq!(result_val.as_number(), 42.0);
     }
 }
