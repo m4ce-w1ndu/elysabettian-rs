@@ -352,6 +352,8 @@ impl<'a> Compiler<'a> {
             self.if_statement();
         } else if self.parser.match_token(TokenType::While) {
             self.while_statement();
+        } else if self.parser.match_token(TokenType::For) {
+            self.for_statement();
         } else {
             self.expression_statement();
         }
@@ -679,6 +681,58 @@ impl<'a> Compiler<'a> {
         self.patch_jump(exit_jump);
         self.emit_opcode(Opcode::Pop);
     }
+
+    /// Compiles a C-style `for` loop statement.
+    ///
+    /// Manages an inner scope for variable declarations within the initializer, evaluates
+    /// the optional condition with an exit jump, defers the increment step via jumps
+    /// so it executes after each body iteration, and cleanly patches all branches.
+    fn for_statement(&mut self) {
+        self.begin_scope();
+        self.parser
+            .consume(TokenType::OpenParen, "Expected '(' after 'for'.");
+
+        if self.parser.match_token(TokenType::Semicolon) {
+            ()
+        } else if self.parser.match_token(TokenType::Var) {
+            self.var_declaration();
+        } else {
+            self.expression_statement();
+        }
+
+        let mut loop_start = self.chunk.count();
+        let mut exit_jump: Option<usize> = None;
+        if !self.parser.match_token(TokenType::Semicolon) {
+            self.expression();
+            self.parser
+                .consume(TokenType::Semicolon, "Expected ';' after loop condition.");
+            exit_jump = Some(self.emit_jump(Opcode::JumpIfFalse));
+            self.emit_opcode(Opcode::Pop);
+        }
+
+        if !self.parser.match_token(TokenType::CloseParen) {
+            let body_jump = self.emit_jump(Opcode::Jump);
+            let increment_start = self.chunk.count();
+            self.expression();
+            self.emit_opcode(Opcode::Pop);
+
+            self.parser
+                .consume(TokenType::CloseParen, "Expected ')' after 'for' clauses.");
+            self.emit_loop(loop_start);
+            loop_start = increment_start;
+            self.patch_jump(body_jump);
+        }
+
+        self.statement();
+        self.emit_loop(loop_start);
+
+        if let Some(jump) = exit_jump {
+            self.patch_jump(jump);
+            self.emit_opcode(Opcode::Pop);
+        }
+
+        self.end_scope();
+    }
 }
 
 /// Compiles an Elysabettian source code expression into a bytecode `Chunk`.
@@ -900,21 +954,63 @@ mod tests {
             Opcode::Constant,     // 0
             Opcode::DefineGlobal, // 'i'
             // --- Loop start ---
-            Opcode::GetGlobal,    // i
-            Opcode::Constant,     // 3
+            Opcode::GetGlobal, // i
+            Opcode::Constant,  // 3
             Opcode::Less,
-            Opcode::JumpIfFalse,  // exit jump
-            Opcode::Pop,          // pop condition (true)
-            Opcode::GetGlobal,    // i
+            Opcode::JumpIfFalse, // exit jump
+            Opcode::Pop,         // pop condition (true)
+            Opcode::GetGlobal,   // i
             Opcode::Print,
-            Opcode::GetGlobal,    // i
-            Opcode::Constant,     // 1
+            Opcode::GetGlobal, // i
+            Opcode::Constant,  // 1
             Opcode::Add,
-            Opcode::SetGlobal,    // i
-            Opcode::Pop,          // expression statement pop
-            Opcode::Loop,         // back to loop start
-            Opcode::Pop,          // exit pop condition (false)
+            Opcode::SetGlobal, // i
+            Opcode::Pop,       // expression statement pop
+            Opcode::Loop,      // back to loop start
+            Opcode::Pop,       // exit pop condition (false)
             Opcode::Nop,
+            Opcode::Return,
+        ];
+
+        assert_eq!(extract_opcodes(&chunk), expected_opcodes);
+    }
+
+    #[test]
+    fn test_compile_for_statement() {
+        let mut interner = StringInterner::new();
+        let source = r#"
+            for (var i = 0; i < 3; i = i + 1) {
+                print i;
+            }
+        "#;
+        let chunk = compile(source, &mut interner).expect("Compilation failed.");
+
+        ely_core::debug::disassemble_chunk(&chunk, "test_for_statement");
+
+        let expected_opcodes = vec![
+            Opcode::Constant, // 0 (var i = 0 in local slot 0)
+            // --- Condition start ---
+            Opcode::GetLocal,    // slot 0 (i)
+            Opcode::Constant,    // 3
+            Opcode::Less,
+            Opcode::JumpIfFalse, // exit jump
+            Opcode::Pop,         // condition pop (true)
+            Opcode::Jump,        // body_jump: jump over increment to body
+            // --- Increment start ---
+            Opcode::GetLocal,    // slot 0 (i)
+            Opcode::Constant,    // 1
+            Opcode::Add,
+            Opcode::SetLocal,    // slot 0 (i)
+            Opcode::Pop,         // increment expression pop
+            Opcode::Loop,        // loop back to condition
+            // --- Body ---
+            Opcode::GetLocal,    // slot 0 (i)
+            Opcode::Print,
+            Opcode::Pop,         // block scope cleanup (no locals inside block)
+            Opcode::Loop,        // loop back to increment
+            // --- Loop exit ---
+            Opcode::Pop,         // condition pop (false)
+            Opcode::Nop,         // implicit return null
             Opcode::Return,
         ];
 
