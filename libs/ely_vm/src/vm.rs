@@ -113,6 +113,27 @@ impl<'a> VM<'a> {
                     let is_falsy = value.is_null() || (value.is_bool() && !value.as_bool());
                     self.push(Value::bool(is_falsy));
                 }
+                Opcode::Equal => {
+                    let b = self.pop();
+                    let a = self.pop();
+                    self.push(Value::bool(a.0 == b.0));
+                }
+                Opcode::Greater => {
+                    if !self.peek(0).is_number() || !self.peek(1).is_number() {
+                        return InterpretResult::RuntimeError;
+                    }
+                    let b = self.pop().as_number();
+                    let a = self.pop().as_number();
+                    self.push(Value::bool(a > b));
+                }
+                Opcode::Less => {
+                    if !self.peek(0).is_number() || !self.peek(1).is_number() {
+                        return InterpretResult::RuntimeError;
+                    }
+                    let b = self.pop().as_number();
+                    let a = self.pop().as_number();
+                    self.push(Value::bool(a < b));
+                }
                 _ => return InterpretResult::RuntimeError,
             }
         }
@@ -256,6 +277,31 @@ mod tests {
         chunk.write_byte(Opcode::Add as u8, 1);
         chunk.write_byte(Opcode::Negate as u8, 1);
         // stack top is -11.0, return it
+        chunk.write_byte(Opcode::Return as u8, 1);
+
+        let mut vm = VM::new();
+        let result = vm.interpret(&chunk);
+
+        assert_eq!(result, InterpretResult::Ok);
+    }
+
+    #[test]
+    fn test_vm_interpret_comparisons() {
+        let mut chunk = Chunk::new();
+        // 5 < 10 -> true
+        let c1 = chunk.add_constant(Value::number(5.0));
+        let c2 = chunk.add_constant(Value::number(10.0));
+
+        chunk.write_byte(Opcode::Constant as u8, 1);
+        chunk.write_byte(c1 as u8, 1);
+
+        chunk.write_byte(Opcode::Constant as u8, 1);
+        chunk.write_byte(c2 as u8, 1);
+
+        chunk.write_byte(Opcode::Less as u8, 1);
+        // check with Equal against true
+        chunk.write_byte(Opcode::True as u8, 1);
+        chunk.write_byte(Opcode::Equal as u8, 1);
         chunk.write_byte(Opcode::Return as u8, 1);
 
         let mut vm = VM::new();
