@@ -60,3 +60,26 @@ pub enum TokenType {
     Error,
     Eof,
 }
+
+/// Represents a lexical token emitted by the scanner, referencing a slice of the source code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Token<'a> {
+    /// Category of this token.
+    pub token_type: TokenType,
+    /// Exact textual slice in the original source code.
+    pub lexeme: &'a str,
+    /// 1-based source line where the token was encountered.
+    pub line: u32,
+}
+
+impl<'a> Token<'a> {
+    /// Constructs a new lexical token.
+    #[inline]
+    pub fn new(token_type: TokenType, lexeme: &'a str, line: u32) -> Self {
+        Self {
+            token_type,
+            lexeme,
+            line,
+        }
+    }
+}
