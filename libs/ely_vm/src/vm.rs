@@ -44,6 +44,8 @@ impl VM {
     /// Interprets a compiled bytecode chunk by initializing the top-level call frame and dispatching.
     pub fn interpret(&mut self, chunk: &Chunk) -> InterpretResult {
         self.reset_stack();
+        // Slot 0 is reserved for the script/caller function (stack convention)
+        self.push(Value::null());
         self.frames.push(CallFrame::new(Rc::new(chunk.clone()), 0));
         self.run()
     }
@@ -350,6 +352,33 @@ impl VM {
                                     let callee_slot = self.stack.len() - arg_count - 1;
                                     self.stack[callee_slot] = instance_val;
                                 }
+                                Some(HeapObject::BoundMethod(bound)) => {
+                                    let receiver = bound.receiver;
+                                    let method_id = bound.method_id;
+                                    let callee_slot = self.stack.len() - arg_count - 1;
+                                    self.stack[callee_slot] = receiver;
+
+                                    let func = match self.heap.get(method_id) {
+                                        Some(HeapObject::Function(f)) => f,
+                                        Some(HeapObject::Closure(c)) => match self.heap.get(c.function_id) {
+                                            Some(HeapObject::Function(f)) => f,
+                                            _ => return InterpretResult::RuntimeError,
+                                        },
+                                        _ => return InterpretResult::RuntimeError,
+                                    };
+
+                                    if arg_count != func.arity {
+                                        return InterpretResult::RuntimeError;
+                                    }
+
+                                    if self.frames.len() == MAX_FRAMES {
+                                        return InterpretResult::RuntimeError;
+                                    }
+
+                                    let slots = self.stack.len() - arg_count - 1;
+                                    let chunk = func.chunk.clone();
+                                    self.frames.push(CallFrame::new(chunk, slots));
+                                }
                                 _ => return InterpretResult::RuntimeError,
                             }
                         }
@@ -489,7 +518,9 @@ impl VM {
                                 },
                                 _ => return InterpretResult::RuntimeError,
                             };
-                            self.push(Value::obj(method_id as u64));
+                            let bound_obj = crate::heap::ObjBoundMethod::new(instance_val, method_id);
+                            let bound_val = self.allocate_object(HeapObject::BoundMethod(bound_obj));
+                            self.push(bound_val);
                         }
                     } else {
                         return InterpretResult::RuntimeError;
@@ -510,7 +541,166 @@ impl VM {
                         return InterpretResult::RuntimeError;
                     }
                 }
-                _ => return InterpretResult::RuntimeError,
+                Opcode::Inherit => {
+                    let subclass_val = self.peek(0);
+                    let superclass_val = self.peek(1);
+
+                    let super_methods = match self.get_object(superclass_val) {
+                        Some(HeapObject::Class(c)) => c.methods.clone(),
+                        _ => return InterpretResult::RuntimeError,
+                    };
+
+                    match self.get_object_mut(subclass_val) {
+                        Some(HeapObject::Class(sub)) => {
+                            for (name, method) in super_methods {
+                                sub.methods.entry(name).or_insert(method);
+                            }
+                        }
+                        _ => return InterpretResult::RuntimeError,
+                    }
+
+                    self.pop(); // Pop subclass
+                }
+                Opcode::GetSuper => {
+                    let name_const = self.frames[frame_idx].read_constant();
+                    let name_id = name_const.as_obj() as u32;
+
+                    let superclass_val = self.pop();
+                    let instance_val = self.peek(0);
+
+                    let method_id = match self.get_object(superclass_val) {
+                        Some(HeapObject::Class(c)) => match c.methods.get(&name_id) {
+                            Some(&m) => m,
+                            None => return InterpretResult::RuntimeError,
+                        },
+                        _ => return InterpretResult::RuntimeError,
+                    };
+
+                    let bound_obj = crate::heap::ObjBoundMethod::new(instance_val, method_id);
+                    let bound_val = self.allocate_object(HeapObject::BoundMethod(bound_obj));
+                    self.pop(); // Pop instance
+                    self.push(bound_val);
+                }
+                Opcode::Invoke => {
+                    let name_const = self.frames[frame_idx].read_constant();
+                    let name_id = name_const.as_obj() as u32;
+                    let arg_count = self.frames[frame_idx].read_byte() as usize;
+
+                    let receiver_val = self.peek(arg_count);
+                    let (class_id, field_val) = match self.get_object(receiver_val) {
+                        Some(HeapObject::Instance(inst)) => {
+                            let field = inst.fields.get(&name_id).copied();
+                            (inst.class_id, field)
+                        }
+                        _ => return InterpretResult::RuntimeError,
+                    };
+
+                    if let Some(val) = field_val {
+                        let receiver_slot = self.stack.len() - arg_count - 1;
+                        self.stack[receiver_slot] = val;
+                        // Call field value
+                        if let Some(&native_fn) = self.natives.get(&(val.as_obj() as u32)) {
+                            let args_start = self.stack.len() - arg_count;
+                            let result = native_fn(arg_count as u8, &self.stack[args_start..]);
+                            self.stack.truncate(args_start - 1);
+                            self.push(result);
+                        } else {
+                            match self.get_object(val) {
+                                Some(HeapObject::Function(func)) => {
+                                    if arg_count != func.arity || self.frames.len() == MAX_FRAMES {
+                                        return InterpretResult::RuntimeError;
+                                    }
+                                    let slots = self.stack.len() - arg_count - 1;
+                                    let chunk = func.chunk.clone();
+                                    self.frames.push(CallFrame::new(chunk, slots));
+                                }
+                                Some(HeapObject::Closure(closure)) => {
+                                    let func = match self.heap.get(closure.function_id) {
+                                        Some(HeapObject::Function(f)) => f,
+                                        _ => return InterpretResult::RuntimeError,
+                                    };
+                                    if arg_count != func.arity || self.frames.len() == MAX_FRAMES {
+                                        return InterpretResult::RuntimeError;
+                                    }
+                                    let slots = self.stack.len() - arg_count - 1;
+                                    let chunk = func.chunk.clone();
+                                    let closure_id = val.as_obj() as usize;
+                                    self.frames.push(CallFrame::with_closure(chunk, slots, closure_id));
+                                }
+                                _ => return InterpretResult::RuntimeError,
+                            }
+                        }
+                    } else {
+                        // Invoke method from class
+                        let method_id = match self.heap.get(class_id) {
+                            Some(HeapObject::Class(c)) => match c.methods.get(&name_id) {
+                                Some(&m) => m,
+                                None => return InterpretResult::RuntimeError,
+                            },
+                            _ => return InterpretResult::RuntimeError,
+                        };
+
+                        let (func_chunk, arity, closure_id) = match self.heap.get(method_id) {
+                            Some(HeapObject::Function(f)) => (f.chunk.clone(), f.arity, None),
+                            Some(HeapObject::Closure(c)) => {
+                                let f = match self.heap.get(c.function_id) {
+                                    Some(HeapObject::Function(func)) => func,
+                                    _ => return InterpretResult::RuntimeError,
+                                };
+                                (f.chunk.clone(), f.arity, Some(method_id))
+                            }
+                            _ => return InterpretResult::RuntimeError,
+                        };
+
+                        if arg_count != arity || self.frames.len() == MAX_FRAMES {
+                            return InterpretResult::RuntimeError;
+                        }
+
+                        let slots = self.stack.len() - arg_count - 1;
+                        if let Some(cid) = closure_id {
+                            self.frames.push(CallFrame::with_closure(func_chunk, slots, cid));
+                        } else {
+                            self.frames.push(CallFrame::new(func_chunk, slots));
+                        }
+                    }
+                }
+                Opcode::SuperInvoke => {
+                    let name_const = self.frames[frame_idx].read_constant();
+                    let name_id = name_const.as_obj() as u32;
+                    let arg_count = self.frames[frame_idx].read_byte() as usize;
+
+                    let superclass_val = self.pop();
+                    let method_id = match self.get_object(superclass_val) {
+                        Some(HeapObject::Class(c)) => match c.methods.get(&name_id) {
+                            Some(&m) => m,
+                            None => return InterpretResult::RuntimeError,
+                        },
+                        _ => return InterpretResult::RuntimeError,
+                    };
+
+                    let (func_chunk, arity, closure_id) = match self.heap.get(method_id) {
+                        Some(HeapObject::Function(f)) => (f.chunk.clone(), f.arity, None),
+                        Some(HeapObject::Closure(c)) => {
+                            let f = match self.heap.get(c.function_id) {
+                                Some(HeapObject::Function(func)) => func,
+                                _ => return InterpretResult::RuntimeError,
+                            };
+                            (f.chunk.clone(), f.arity, Some(method_id))
+                        }
+                        _ => return InterpretResult::RuntimeError,
+                    };
+
+                    if arg_count != arity || self.frames.len() == MAX_FRAMES {
+                        return InterpretResult::RuntimeError;
+                    }
+
+                    let slots = self.stack.len() - arg_count - 1;
+                    if let Some(cid) = closure_id {
+                        self.frames.push(CallFrame::with_closure(func_chunk, slots, cid));
+                    } else {
+                        self.frames.push(CallFrame::new(func_chunk, slots));
+                    }
+                }
             }
         }
     }
@@ -778,5 +968,63 @@ mod tests {
         let result = vm.interpret(&chunk);
         assert_eq!(result, InterpretResult::Ok);
         assert_eq!(vm.peek(0), Value::number(999.0));
+    }
+
+    #[test]
+    fn test_vm_interpret_inherit_and_invoke() {
+        let mut vm = VM::new();
+
+        // Build method function: returns 42.0 (takes 0 args, slot 0 is receiver)
+        let mut method_chunk = Chunk::new();
+        emit_constant(&mut method_chunk, Value::number(42.0), 1);
+        method_chunk.write_opcode(Opcode::Return, 1);
+        let mut method_func = crate::heap::ObjFunction::new(0, Some("foo".to_string()));
+        method_func.chunk = Rc::new(method_chunk);
+        let method_func_val = vm.allocate_object(HeapObject::Function(method_func));
+
+        let mut chunk = Chunk::new();
+        // 1. Superclass A
+        let class_a_name = chunk.add_constant(Value::obj(1));
+        chunk.write_opcode(Opcode::Class, 1);
+        chunk.write_byte(class_a_name as u8, 1);
+
+        // Add method 'foo' (name id 100) to class A
+        let method_name_const = chunk.add_constant(Value::obj(100));
+        let method_const = chunk.add_constant(method_func_val);
+        chunk.write_opcode(Opcode::Constant, 1);
+        chunk.write_byte(method_const as u8, 1);
+        chunk.write_opcode(Opcode::Method, 1);
+        chunk.write_byte(method_name_const as u8, 1);
+
+        // 2. Subclass B
+        let class_b_name = chunk.add_constant(Value::obj(2));
+        chunk.write_opcode(Opcode::Class, 1);
+        chunk.write_byte(class_b_name as u8, 1);
+
+        // Inherit: stack has [Class A, Class B]
+        chunk.write_opcode(Opcode::Inherit, 1);
+        // Inherit pops Class B, Class A is left on stack. Pop Class A
+        chunk.write_opcode(Opcode::Pop, 1);
+
+        // Instantiate Class B (which is on heap id 2)
+        // Push Class B directly and Call(0)
+        chunk.write_opcode(Opcode::Constant, 1);
+        let class_b_val = Value::obj(2);
+        let b_const = chunk.add_constant(class_b_val);
+        chunk.write_byte(b_const as u8, 1);
+        chunk.write_opcode(Opcode::Call, 1);
+        chunk.write_byte(0, 1);
+
+        // Stack has Instance of B. Invoke 'foo' with 0 args
+        chunk.write_opcode(Opcode::Invoke, 1);
+        chunk.write_byte(method_name_const as u8, 1);
+        chunk.write_byte(0, 1);
+
+        // Return result
+        chunk.write_opcode(Opcode::Return, 1);
+
+        let result = vm.interpret(&chunk);
+        assert_eq!(result, InterpretResult::Ok);
+        assert_eq!(vm.peek(0), Value::number(42.0));
     }
 }

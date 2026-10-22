@@ -13,6 +13,23 @@ pub enum HeapObject {
     Upvalue(ObjUpvalue),
     Class(ObjClass),
     Instance(ObjInstance),
+    BoundMethod(ObjBoundMethod),
+}
+
+/// Represents a method bound to a receiver instance.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjBoundMethod {
+    pub receiver: Value,
+    pub method_id: usize,
+}
+
+impl ObjBoundMethod {
+    pub fn new(receiver: Value, method_id: usize) -> Self {
+        Self {
+            receiver,
+            method_id,
+        }
+    }
 }
 
 /// Represents a class definition with its methods table.
