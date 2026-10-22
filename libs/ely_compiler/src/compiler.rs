@@ -923,11 +923,11 @@ mod tests {
             Opcode::True,
             Opcode::JumpIfFalse,
             Opcode::Pop,
-            Opcode::Constant,
+            Opcode::Constant, // then branch
             Opcode::Print,
-            Opcode::Jump,
+            Opcode::Jump,     // skip else
             Opcode::Pop,
-            Opcode::Constant,
+            Opcode::Constant, // else branch
             Opcode::Print,
             Opcode::Nop,
             Opcode::Return,
@@ -953,13 +953,16 @@ mod tests {
         let expected_opcodes = vec![
             Opcode::Constant,
             Opcode::DefineGlobal,
+            // condition
             Opcode::GetGlobal,
             Opcode::Constant,
             Opcode::Less,
             Opcode::JumpIfFalse,
             Opcode::Pop,
+            // body
             Opcode::GetGlobal,
             Opcode::Print,
+            // increment
             Opcode::GetGlobal,
             Opcode::Constant,
             Opcode::Add,
@@ -987,19 +990,22 @@ mod tests {
         ely_core::debug::disassemble_chunk(&chunk, "test_for_statement");
 
         let expected_opcodes = vec![
-            Opcode::Constant,
+            Opcode::Constant, // initializer
+            // condition
             Opcode::GetLocal,
             Opcode::Constant,
             Opcode::Less,
             Opcode::JumpIfFalse,
             Opcode::Pop,
-            Opcode::Jump,
+            Opcode::Jump, // jump to body
+            // increment
             Opcode::GetLocal,
             Opcode::Constant,
             Opcode::Add,
             Opcode::SetLocal,
             Opcode::Pop,
             Opcode::Loop,
+            // body
             Opcode::GetLocal,
             Opcode::Print,
             Opcode::Pop,
