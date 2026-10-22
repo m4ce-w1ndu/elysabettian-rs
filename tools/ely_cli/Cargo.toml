@@ -4,3 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+ely_core.workspace = true
+ely_compiler.workspace = true
+ely_vm.workspace = true
+clap.workspace = true
+rustyline.workspace = true
+
