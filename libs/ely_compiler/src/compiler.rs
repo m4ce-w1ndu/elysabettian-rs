@@ -804,13 +804,13 @@ mod tests {
         ely_core::debug::disassemble_chunk(&chunk, "test_math");
 
         let expected_opcodes = vec![
-            Opcode::Constant, // 1
-            Opcode::Constant, // 2
-            Opcode::Constant, // 3
-            Opcode::Multiply, // 2 * 3
-            Opcode::Add,      // 1 + (2 * 3)
-            Opcode::Pop,      // expression statement pop
-            Opcode::Nop,      // implicit return null
+            Opcode::Constant,
+            Opcode::Constant,
+            Opcode::Constant,
+            Opcode::Multiply,
+            Opcode::Add,
+            Opcode::Pop,
+            Opcode::Nop,
             Opcode::Return,
         ];
 
@@ -835,17 +835,17 @@ mod tests {
 
         // List of expected opcodes
         let expected_opcodes = vec![
-            Opcode::Constant,     // 10
-            Opcode::DefineGlobal, // 'x'
-            Opcode::GetGlobal,    // 'x'
-            Opcode::Constant,     // 5
-            Opcode::Add,          // +
-            Opcode::Print,        // print
-            Opcode::Constant,     // 20
-            Opcode::SetGlobal,    // 'x'
-            Opcode::Pop,          // expression statement
-            Opcode::Nop,          // implicit return null
-            Opcode::Return,       // return
+            Opcode::Constant,
+            Opcode::DefineGlobal,
+            Opcode::GetGlobal,
+            Opcode::Constant,
+            Opcode::Add,
+            Opcode::Print,
+            Opcode::Constant,
+            Opcode::SetGlobal,
+            Opcode::Pop,
+            Opcode::Nop,
+            Opcode::Return,
         ];
 
         assert_eq!(extract_opcodes(&chunk), expected_opcodes);
@@ -887,18 +887,18 @@ mod tests {
         ely_core::debug::disassemble_chunk(&chunk, "test_locals_scope");
 
         let expected_opcodes = vec![
-            Opcode::Constant,     // a = 1
-            Opcode::DefineGlobal, // 'a'
-            Opcode::Constant,     // b = 2 (local slot 0)
-            Opcode::GetGlobal,    // 'a'
-            Opcode::GetLocal,     // slot 0 (b)
+            Opcode::Constant,
+            Opcode::DefineGlobal,
+            Opcode::Constant,
+            Opcode::GetGlobal,
+            Opcode::GetLocal,
             Opcode::Add,
             Opcode::Print,
-            Opcode::Constant, // 3
-            Opcode::SetLocal, // slot 0 (b)
-            Opcode::Pop,      // statement pop
-            Opcode::Pop,      // end_scope pops local b off stack!
-            Opcode::Nop,      // implicit return null
+            Opcode::Constant,
+            Opcode::SetLocal,
+            Opcode::Pop,
+            Opcode::Pop,
+            Opcode::Nop,
             Opcode::Return,
         ];
 
@@ -923,11 +923,11 @@ mod tests {
             Opcode::True,
             Opcode::JumpIfFalse,
             Opcode::Pop,
-            Opcode::Constant, // 1
+            Opcode::Constant,
             Opcode::Print,
             Opcode::Jump,
             Opcode::Pop,
-            Opcode::Constant, // 2
+            Opcode::Constant,
             Opcode::Print,
             Opcode::Nop,
             Opcode::Return,
@@ -951,23 +951,22 @@ mod tests {
         ely_core::debug::disassemble_chunk(&chunk, "test_while_statement");
 
         let expected_opcodes = vec![
-            Opcode::Constant,     // 0
-            Opcode::DefineGlobal, // 'i'
-            // --- Loop start ---
-            Opcode::GetGlobal, // i
-            Opcode::Constant,  // 3
+            Opcode::Constant,
+            Opcode::DefineGlobal,
+            Opcode::GetGlobal,
+            Opcode::Constant,
             Opcode::Less,
-            Opcode::JumpIfFalse, // exit jump
-            Opcode::Pop,         // pop condition (true)
-            Opcode::GetGlobal,   // i
+            Opcode::JumpIfFalse,
+            Opcode::Pop,
+            Opcode::GetGlobal,
             Opcode::Print,
-            Opcode::GetGlobal, // i
-            Opcode::Constant,  // 1
+            Opcode::GetGlobal,
+            Opcode::Constant,
             Opcode::Add,
-            Opcode::SetGlobal, // i
-            Opcode::Pop,       // expression statement pop
-            Opcode::Loop,      // back to loop start
-            Opcode::Pop,       // exit pop condition (false)
+            Opcode::SetGlobal,
+            Opcode::Pop,
+            Opcode::Loop,
+            Opcode::Pop,
             Opcode::Nop,
             Opcode::Return,
         ];
@@ -988,29 +987,25 @@ mod tests {
         ely_core::debug::disassemble_chunk(&chunk, "test_for_statement");
 
         let expected_opcodes = vec![
-            Opcode::Constant, // 0 (var i = 0 in local slot 0)
-            // --- Condition start ---
-            Opcode::GetLocal,    // slot 0 (i)
-            Opcode::Constant,    // 3
+            Opcode::Constant,
+            Opcode::GetLocal,
+            Opcode::Constant,
             Opcode::Less,
-            Opcode::JumpIfFalse, // exit jump
-            Opcode::Pop,         // condition pop (true)
-            Opcode::Jump,        // body_jump: jump over increment to body
-            // --- Increment start ---
-            Opcode::GetLocal,    // slot 0 (i)
-            Opcode::Constant,    // 1
+            Opcode::JumpIfFalse,
+            Opcode::Pop,
+            Opcode::Jump,
+            Opcode::GetLocal,
+            Opcode::Constant,
             Opcode::Add,
-            Opcode::SetLocal,    // slot 0 (i)
-            Opcode::Pop,         // increment expression pop
-            Opcode::Loop,        // loop back to condition
-            // --- Body ---
-            Opcode::GetLocal,    // slot 0 (i)
+            Opcode::SetLocal,
+            Opcode::Pop,
+            Opcode::Loop,
+            Opcode::GetLocal,
             Opcode::Print,
-            Opcode::Pop,         // block scope cleanup (no locals inside block)
-            Opcode::Loop,        // loop back to increment
-            // --- Loop exit ---
-            Opcode::Pop,         // condition pop (false)
-            Opcode::Nop,         // implicit return null
+            Opcode::Pop,
+            Opcode::Loop,
+            Opcode::Pop,
+            Opcode::Nop,
             Opcode::Return,
         ];
 
