@@ -18,8 +18,21 @@ impl<'a> JitCompiler<'a> {
 
     /// Compiles an arithmetic bytecode chunk into a native `extern "C" fn() -> f64` executable function.
     pub fn compile_arithmetic(&mut self, chunk: &Chunk, name: &str) -> Result<*const u8, String> {
-        // Define signature: no arguments, returns a native 64-bit float
+        self.compile_function(chunk, 0, name)
+    }
+
+    /// Compiles a function with `arity` parameters and local variables into native code.
+    pub fn compile_function(
+        &mut self,
+        chunk: &Chunk,
+        arity: usize,
+        name: &str,
+    ) -> Result<*const u8, String> {
+        // Define signature with `arity` f64 parameters, returning a native f64
         let mut sig = self.engine.module.make_signature();
+        for _ in 0..arity {
+            sig.params.push(AbiParam::new(types::F64));
+        }
         sig.returns.push(AbiParam::new(types::F64));
 
         // Declare the function symbol in the JIT module
@@ -44,6 +57,48 @@ impl<'a> JitCompiler<'a> {
             builder.switch_to_block(entry_block);
             builder.seal_block(entry_block);
 
+            // Track maximum local slot accessed to pre-declare SSA variables
+            let mut max_local = arity;
+            let mut scan_ip = 0;
+            while scan_ip < chunk.count() {
+                if let Ok(op) = Opcode::try_from(chunk.code[scan_ip]) {
+                    scan_ip += 1;
+                    match op {
+                        Opcode::GetLocal | Opcode::SetLocal => {
+                            let slot = chunk.code[scan_ip] as usize;
+                            scan_ip += 1;
+                            if slot > max_local {
+                                max_local = slot;
+                            }
+                        }
+                        Opcode::Constant => scan_ip += 1,
+                        Opcode::Jump | Opcode::JumpIfFalse | Opcode::Loop => scan_ip += 2,
+                        _ => {}
+                    }
+                } else {
+                    scan_ip += 1;
+                }
+            }
+
+            // Declare Cranelift SSA variables for each local slot (registers)
+            let mut vars = Vec::with_capacity(max_local + 1);
+            for i in 0..=max_local {
+                let var = Variable::new(i);
+                builder.declare_var(var, types::F64);
+                vars.push(var);
+            }
+
+            // Bind incoming function arguments to the corresponding local slots
+            // Slot 0 in Elysabettian convention is reserved for callee/receiver
+            // Function parameters start at slot 1 ..= arity
+            let params = builder.block_params(entry_block).to_vec();
+            for (idx, &param_val) in params.iter().enumerate() {
+                let slot = idx + 1;
+                if slot < vars.len() {
+                    builder.def_var(vars[slot], param_val);
+                }
+            }
+
             // Compile-time abstract evaluation stack of Cranelift SSA values
             let mut eval_stack: Vec<Value> = Vec::new();
 
@@ -62,6 +117,18 @@ impl<'a> JitCompiler<'a> {
                             .ok_or("Constant not found in chunk pool")?;
                         let val = builder.ins().f64const(const_val.as_number());
                         eval_stack.push(val);
+                    }
+                    Opcode::GetLocal => {
+                        let slot = chunk.code[ip] as usize;
+                        ip += 1;
+                        let val = builder.use_var(vars[slot]);
+                        eval_stack.push(val);
+                    }
+                    Opcode::SetLocal => {
+                        let slot = chunk.code[ip] as usize;
+                        ip += 1;
+                        let val = *eval_stack.last().ok_or("Stack underflow in SetLocal")?;
+                        builder.def_var(vars[slot], val);
                     }
                     Opcode::Add => {
                         let b = eval_stack.pop().ok_or("Stack underflow in Opcode::Add")?;
@@ -108,11 +175,9 @@ impl<'a> JitCompiler<'a> {
                         builder.ins().return_(&[res]);
                         break;
                     }
-                    Opcode::Pop | Opcode::Nop => {
-                        // Allow trailing pop or nop instructions before return
-                    }
+                    Opcode::Pop | Opcode::Nop => {}
                     _ => {
-                        return Err(format!("Unsupported opcode for arithmetic JIT: {:?}", op));
+                        return Err(format!("Unsupported opcode for JIT: {:?}", op));
                     }
                 }
             }
