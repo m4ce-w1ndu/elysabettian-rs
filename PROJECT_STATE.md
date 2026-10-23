@@ -28,12 +28,20 @@ Porting completo della virtual machine ad alte prestazioni e del compilatore byt
   - OOP completo: `Class`, `Method`, `GetProperty`, `SetProperty`, `Inherit`, `GetSuper`, `Invoke`, `SuperInvoke`.
   - 6 unit test passando al 100%.
 - **`libs/ely_jit`**:
-  - Setup per Cranelift JIT compiler.
+  - `JitEngine`: Target ISA detection, memory management con Cranelift JITModule.
+  - `JitCompiler`: Lowering del bytecode in Cranelift SSA IR.
+  - Supporto ad aritmetica floating-point 64-bit hardware (`fadd`, `fsub`, `fmul`, `fdiv`, `fneg`).
+  - Supporto a parametri ed allocazione registri SSA per variabili locali (`GetLocal`, `SetLocal`).
+  - Control Flow Graph completo con blocchi Cranelift per salti in avanti e all'indietro (`Jump`, `JumpIfFalse`, `Loop`).
+  - Confronti in virgola mobile (`Less`, `Greater`, `Equal`).
+  - Unit test JIT passando al 100% (inclusa esecuzione nativa di loop e accumulatore).
 - **`tools/ely_cli`**:
+
   - Entry point per CLI REPL e runner script `.ely`.
 
 ---
 
 ## Prossimi Passi
-1. **`libs/ely_jit`**: Compilazione nativa JIT con Cranelift per aritmetica, salti e frame interop (da svolgere passo-passo insieme).
+1. **Integrazione VM <-> JIT**: Aggiungere un tier-up / hot-path detection nella VM (o annotazione / esecuzione diretta) per dirottare l'esecuzione di funzioni e loop intensivi dal loop di dispatch della VM al codice macchina nativo JIT compilato.
+
 
