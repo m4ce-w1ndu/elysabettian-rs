@@ -1,0 +1,7 @@
+// Benchmark 1: Floating-Point Arithmetic Accumulation
+var acc = 0;
+var limit = 2000000;
+for (var i = 1; i <= limit; i = i + 1) {
+    acc = acc + (i * 3.14159265 - (i / 2.71828182));
+}
+print acc;

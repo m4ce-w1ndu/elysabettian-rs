@@ -1,0 +1,22 @@
+// Benchmark 4: Collatz Conjecture (3n + 1) Trajectory Steps
+// Computes total stopping steps across numbers from 1 to 25,000
+var total_steps = 0;
+var max_n = 25000;
+var n = 0;
+var steps = 0;
+
+for (var i = 1; i <= max_n; i = i + 1) {
+    n = i;
+    steps = 0;
+    while (n > 1) {
+        if ((n & 1) == 0) {
+            n = n >> 1;
+        } else {
+            n = 3 * n + 1;
+        }
+        steps = steps + 1;
+    }
+    total_steps = total_steps + steps;
+}
+
+print total_steps;

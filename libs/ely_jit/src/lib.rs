@@ -178,4 +178,36 @@ mod tests {
         assert_eq!(sum_10, 55.0);
         assert_eq!(sum_100, 5050.0);
     }
+
+    #[test]
+    fn test_jit_bitwise_execution() {
+        let mut engine = JitEngine::new().expect("Failed to create JIT engine");
+        let mut chunk = Chunk::new();
+
+        let c_a = chunk.add_constant(Value::number(12.0)); // 0b1100
+        let c_b = chunk.add_constant(Value::number(10.0)); // 0b1010
+        let c_shift = chunk.add_constant(Value::number(2.0));
+
+        // (12 & 10) -> 8
+        chunk.write_opcode(Opcode::Constant, 1);
+        chunk.write_byte(c_a as u8, 1);
+        chunk.write_opcode(Opcode::Constant, 1);
+        chunk.write_byte(c_b as u8, 1);
+        chunk.write_opcode(Opcode::BwAnd, 1);
+
+        // (8 << 2) -> 32
+        chunk.write_opcode(Opcode::Constant, 1);
+        chunk.write_byte(c_shift as u8, 1);
+        chunk.write_opcode(Opcode::ShiftLeft, 1);
+
+        chunk.write_opcode(Opcode::Return, 1);
+
+        let mut compiler = JitCompiler::new(&mut engine);
+        let code_ptr = compiler
+            .compile_function(&chunk, 0, "test_bitwise")
+            .expect("JIT compilation failed");
+
+        let native_func: extern "C" fn() -> f64 = unsafe { std::mem::transmute(code_ptr) };
+        assert_eq!(native_func(), 32.0);
+    }
 }

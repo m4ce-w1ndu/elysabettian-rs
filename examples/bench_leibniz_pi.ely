@@ -1,0 +1,13 @@
+// Benchmark 3: Leibniz Approximation for Pi
+// Computes 4 * sum_{k=0}^{N} ((-1)^k / (2k + 1))
+var pi_approx = 0;
+var sign = 1;
+var limit = 5000000;
+
+for (var k = 0; k < limit; k = k + 1) {
+    pi_approx = pi_approx + (sign / (2 * k + 1));
+    sign = -sign;
+}
+
+var result = pi_approx * 4;
+print result;

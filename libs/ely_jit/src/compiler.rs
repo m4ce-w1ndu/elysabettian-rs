@@ -176,7 +176,6 @@ impl<'a> JitCompiler<'a> {
 
             // Compile-time abstract evaluation stack of Cranelift SSA values
             let mut eval_stack: Vec<Value> = Vec::new();
-            let mut last_computed_value: Option<Value> = None;
             let mut current_block_terminated = false;
 
             let mut ip = 0;
@@ -352,6 +351,58 @@ impl<'a> JitCompiler<'a> {
                         let res = builder.ins().select(cmp, true_val, false_val);
                         eval_stack.push(res);
                     }
+                    Opcode::BwAnd => {
+                        let b = eval_stack.pop().ok_or("Stack underflow in Opcode::BwAnd")?;
+                        let a = eval_stack.pop().ok_or("Stack underflow in Opcode::BwAnd")?;
+                        let a_int = builder.ins().fcvt_to_sint(types::I64, a);
+                        let b_int = builder.ins().fcvt_to_sint(types::I64, b);
+                        let res_int = builder.ins().band(a_int, b_int);
+                        let res = builder.ins().fcvt_from_sint(types::F64, res_int);
+                        eval_stack.push(res);
+                    }
+                    Opcode::BwOr => {
+                        let b = eval_stack.pop().ok_or("Stack underflow in Opcode::BwOr")?;
+                        let a = eval_stack.pop().ok_or("Stack underflow in Opcode::BwOr")?;
+                        let a_int = builder.ins().fcvt_to_sint(types::I64, a);
+                        let b_int = builder.ins().fcvt_to_sint(types::I64, b);
+                        let res_int = builder.ins().bor(a_int, b_int);
+                        let res = builder.ins().fcvt_from_sint(types::F64, res_int);
+                        eval_stack.push(res);
+                    }
+                    Opcode::BwXor => {
+                        let b = eval_stack.pop().ok_or("Stack underflow in Opcode::BwXor")?;
+                        let a = eval_stack.pop().ok_or("Stack underflow in Opcode::BwXor")?;
+                        let a_int = builder.ins().fcvt_to_sint(types::I64, a);
+                        let b_int = builder.ins().fcvt_to_sint(types::I64, b);
+                        let res_int = builder.ins().bxor(a_int, b_int);
+                        let res = builder.ins().fcvt_from_sint(types::F64, res_int);
+                        eval_stack.push(res);
+                    }
+                    Opcode::BwNot => {
+                        let a = eval_stack.pop().ok_or("Stack underflow in Opcode::BwNot")?;
+                        let a_int = builder.ins().fcvt_to_sint(types::I64, a);
+                        let res_int = builder.ins().bnot(a_int);
+                        let res = builder.ins().fcvt_from_sint(types::F64, res_int);
+                        eval_stack.push(res);
+                    }
+                    Opcode::ShiftLeft => {
+                        let b = eval_stack.pop().ok_or("Stack underflow in Opcode::ShiftLeft")?;
+                        let a = eval_stack.pop().ok_or("Stack underflow in Opcode::ShiftLeft")?;
+                        let a_int = builder.ins().fcvt_to_sint(types::I64, a);
+                        let b_int = builder.ins().fcvt_to_sint(types::I64, b);
+                        let res_int = builder.ins().ishl(a_int, b_int);
+                        let res = builder.ins().fcvt_from_sint(types::F64, res_int);
+                        eval_stack.push(res);
+                    }
+                    Opcode::ShiftRight => {
+                        let b = eval_stack.pop().ok_or("Stack underflow in Opcode::ShiftRight")?;
+                        let a = eval_stack.pop().ok_or("Stack underflow in Opcode::ShiftRight")?;
+                        let a_int = builder.ins().fcvt_to_sint(types::I64, a);
+                        let b_int = builder.ins().fcvt_to_sint(types::I64, b);
+                        let res_int = builder.ins().sshr(a_int, b_int);
+                        let res = builder.ins().fcvt_from_sint(types::F64, res_int);
+                        eval_stack.push(res);
+                    }
                     Opcode::Jump => {
                         let high = chunk.code[ip] as usize;
                         let low = chunk.code[ip + 1] as usize;
@@ -395,15 +446,12 @@ impl<'a> JitCompiler<'a> {
                     Opcode::Return => {
                         let res = eval_stack
                             .pop()
-                            .or(last_computed_value)
                             .unwrap_or_else(|| builder.ins().f64const(0.0));
                         builder.ins().return_(&[res]);
                         current_block_terminated = true;
                     }
                     Opcode::Pop => {
-                        if let Some(val) = eval_stack.pop() {
-                            last_computed_value = Some(val);
-                        }
+                        eval_stack.pop();
                     }
                     Opcode::Nop => {}
                     _ => {

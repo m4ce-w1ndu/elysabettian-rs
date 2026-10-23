@@ -1,0 +1,18 @@
+// Benchmark 2: Iterative Fibonacci Sequence Accumulation
+var a = 0;
+var b = 1;
+var sum = 0;
+var limit = 1000000;
+var temp = 0;
+
+for (var i = 0; i < limit; i = i + 1) {
+    temp = a + b;
+    if (temp > 1000000000) {
+        temp = temp - 1000000000;
+    }
+    a = b;
+    b = temp;
+    sum = sum + a;
+}
+
+print sum;
