@@ -4,6 +4,7 @@ use cranelift::prelude::*;
 use cranelift_module::{Linkage, Module};
 use ely_core::chunk::Chunk;
 use ely_core::opcode::Opcode;
+use ely_core::value::Value as ElyValue;
 
 use crate::engine::JitEngine;
 
@@ -44,6 +45,33 @@ impl<'a> JitCompiler<'a> {
             .declare_function(name, Linkage::Export, &sig)
             .map_err(|e| e.to_string())?;
 
+        // Declare runtime helper function signatures
+        let mut set_global_sig = self.engine.module.make_signature();
+        set_global_sig.params.push(AbiParam::new(types::I32)); // id
+        set_global_sig.params.push(AbiParam::new(types::I64)); // val_bits
+        let set_global_id = self
+            .engine
+            .module
+            .declare_function("ely_jit_set_global", Linkage::Import, &set_global_sig)
+            .map_err(|e| e.to_string())?;
+
+        let mut get_global_sig = self.engine.module.make_signature();
+        get_global_sig.params.push(AbiParam::new(types::I32)); // id
+        get_global_sig.returns.push(AbiParam::new(types::I64)); // val_bits
+        let get_global_id = self
+            .engine
+            .module
+            .declare_function("ely_jit_get_global", Linkage::Import, &get_global_sig)
+            .map_err(|e| e.to_string())?;
+
+        let mut print_val_sig = self.engine.module.make_signature();
+        print_val_sig.params.push(AbiParam::new(types::I64)); // val_bits
+        let print_val_id = self
+            .engine
+            .module
+            .declare_function("ely_jit_print_value", Linkage::Import, &print_val_sig)
+            .map_err(|e| e.to_string())?;
+
         // Set signature in codegen context
         self.engine.ctx.func.signature = sig;
 
@@ -52,6 +80,20 @@ impl<'a> JitCompiler<'a> {
                 &mut self.engine.ctx.func,
                 &mut self.engine.builder_context,
             );
+
+            // Import helper function references into current function
+            let set_global_func = self
+                .engine
+                .module
+                .declare_func_in_func(set_global_id, &mut builder.func);
+            let get_global_func = self
+                .engine
+                .module
+                .declare_func_in_func(get_global_id, &mut builder.func);
+            let print_val_func = self
+                .engine
+                .module
+                .declare_func_in_func(print_val_id, &mut builder.func);
 
             // Pre-pass: scan chunk to find branch targets and maximum local slot
             let mut branch_targets = BTreeSet::new();
@@ -70,7 +112,10 @@ impl<'a> JitCompiler<'a> {
                                 max_local = slot;
                             }
                         }
-                        Opcode::Constant => scan_ip += 1,
+                        Opcode::Constant
+                        | Opcode::DefineGlobal
+                        | Opcode::GetGlobal
+                        | Opcode::SetGlobal => scan_ip += 1,
                         Opcode::Jump | Opcode::JumpIfFalse => {
                             let high = chunk.code[scan_ip] as usize;
                             let low = chunk.code[scan_ip + 1] as usize;
@@ -152,8 +197,64 @@ impl<'a> JitCompiler<'a> {
                         let const_val = chunk
                             .get_constant(const_idx)
                             .ok_or("Constant not found in chunk pool")?;
-                        let val = builder.ins().f64const(const_val.as_number());
+                        let val = if const_val.is_number() {
+                            builder.ins().f64const(const_val.as_number())
+                        } else {
+                            // Non-numeric literal (e.g. object / string handle)
+                            let bits = const_val.0 as i64;
+                            let i64_val = builder.ins().iconst(types::I64, bits);
+                            builder.ins().bitcast(types::F64, MemFlags::new(), i64_val)
+                        };
                         eval_stack.push(val);
+                    }
+                    Opcode::True => {
+                        let bits = ElyValue::bool(true).0 as i64;
+                        let i64_val = builder.ins().iconst(types::I64, bits);
+                        eval_stack.push(builder.ins().bitcast(types::F64, MemFlags::new(), i64_val));
+                    }
+                    Opcode::False => {
+                        let bits = ElyValue::bool(false).0 as i64;
+                        let i64_val = builder.ins().iconst(types::I64, bits);
+                        eval_stack.push(builder.ins().bitcast(types::F64, MemFlags::new(), i64_val));
+                    }
+                    Opcode::DefineGlobal => {
+                        let const_idx = chunk.code[ip] as usize;
+                        ip += 1;
+                        let const_val = chunk.get_constant(const_idx).ok_or("Global name constant not found")?;
+                        let name_id = const_val.as_obj() as u32;
+
+                        let val = eval_stack.pop().ok_or("Stack underflow in DefineGlobal")?;
+                        let bits = builder.ins().bitcast(types::I64, MemFlags::new(), val);
+                        let id_val = builder.ins().iconst(types::I32, name_id as i64);
+                        builder.ins().call(set_global_func, &[id_val, bits]);
+                    }
+                    Opcode::GetGlobal => {
+                        let const_idx = chunk.code[ip] as usize;
+                        ip += 1;
+                        let const_val = chunk.get_constant(const_idx).ok_or("Global name constant not found")?;
+                        let name_id = const_val.as_obj() as u32;
+
+                        let id_val = builder.ins().iconst(types::I32, name_id as i64);
+                        let call = builder.ins().call(get_global_func, &[id_val]);
+                        let bits = builder.inst_results(call)[0];
+                        let val = builder.ins().bitcast(types::F64, MemFlags::new(), bits);
+                        eval_stack.push(val);
+                    }
+                    Opcode::SetGlobal => {
+                        let const_idx = chunk.code[ip] as usize;
+                        ip += 1;
+                        let const_val = chunk.get_constant(const_idx).ok_or("Global name constant not found")?;
+                        let name_id = const_val.as_obj() as u32;
+
+                        let val = *eval_stack.last().ok_or("Stack underflow in SetGlobal")?;
+                        let bits = builder.ins().bitcast(types::I64, MemFlags::new(), val);
+                        let id_val = builder.ins().iconst(types::I32, name_id as i64);
+                        builder.ins().call(set_global_func, &[id_val, bits]);
+                    }
+                    Opcode::Print => {
+                        let val = eval_stack.pop().ok_or("Stack underflow in Opcode::Print")?;
+                        let bits = builder.ins().bitcast(types::I64, MemFlags::new(), val);
+                        builder.ins().call(print_val_func, &[bits]);
                     }
                     Opcode::GetLocal => {
                         let slot = chunk.code[ip] as usize;
@@ -204,6 +305,15 @@ impl<'a> JitCompiler<'a> {
                             .pop()
                             .ok_or("Stack underflow in Opcode::Negate")?;
                         eval_stack.push(builder.ins().fneg(a));
+                    }
+                    Opcode::Not => {
+                        let a = eval_stack.pop().ok_or("Stack underflow in Opcode::Not")?;
+                        let zero = builder.ins().f64const(0.0);
+                        let is_zero = builder.ins().fcmp(FloatCC::Equal, a, zero);
+                        let true_val = builder.ins().f64const(1.0);
+                        let false_val = builder.ins().f64const(0.0);
+                        let res = builder.ins().select(is_zero, true_val, false_val);
+                        eval_stack.push(res);
                     }
                     Opcode::Less => {
                         let b = eval_stack.pop().ok_or("Stack underflow in Opcode::Less")?;

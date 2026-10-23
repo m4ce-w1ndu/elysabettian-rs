@@ -22,10 +22,7 @@ pub fn run_source(
 
     if jit_only {
         match run_jit(&chunk) {
-            Ok(result) => {
-                println!("{}", result);
-                InterpretResult::Ok
-            }
+            Ok(_) => InterpretResult::Ok,
             Err(err) => {
                 eprintln!("JIT Execution Error: {}", err);
                 InterpretResult::RuntimeError

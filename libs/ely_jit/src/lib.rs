@@ -1,5 +1,6 @@
 pub mod compiler;
 pub mod engine;
+pub mod runtime;
 
 #[cfg(test)]
 mod tests {
@@ -45,7 +46,6 @@ mod tests {
             .compile_arithmetic(&chunk, "test_math")
             .expect("JIT compilation failed");
 
-        // Cast executable memory pointer to native function and invoke directly on CPU
         let native_func: extern "C" fn() -> f64 = unsafe { std::mem::transmute(code_ptr) };
         let result = native_func();
 
@@ -58,13 +58,9 @@ mod tests {
         let mut chunk = Chunk::new();
 
         // Computes: (a * 2.0) + (b - 3.0)
-        // Parameter a: slot 1
-        // Parameter b: slot 2
-        // Local c: slot 3
         let c_two = chunk.add_constant(Value::number(2.0));
         let c_three = chunk.add_constant(Value::number(3.0));
 
-        // c = a * 2.0; (SetLocal 3)
         chunk.write_opcode(Opcode::GetLocal, 1);
         chunk.write_byte(1, 1); // a
         chunk.write_opcode(Opcode::Constant, 1);
@@ -74,7 +70,6 @@ mod tests {
         chunk.write_byte(3, 1); // c
         chunk.write_opcode(Opcode::Pop, 1);
 
-        // return c + (b - 3.0)
         chunk.write_opcode(Opcode::GetLocal, 1);
         chunk.write_byte(3, 1); // c
         chunk.write_opcode(Opcode::GetLocal, 1);
@@ -90,7 +85,6 @@ mod tests {
             .compile_function(&chunk, 2, "test_params_locals")
             .expect("JIT compilation failed");
 
-        // Invoke native function: (10.0 * 2.0) + (8.0 - 3.0) = 20.0 + 5.0 = 25.0
         let native_func: extern "C" fn(f64, f64) -> f64 = unsafe { std::mem::transmute(code_ptr) };
         let result = native_func(10.0, 8.0);
 
@@ -102,20 +96,6 @@ mod tests {
         let mut engine = JitEngine::new().expect("Failed to create JIT engine");
         let mut chunk = Chunk::new();
 
-        // Native function calculating sum of 1..=n:
-        // func sum_to(n) {
-        //     var acc = 0.0;
-        //     var i = 1.0;
-        //     while (i <= n) {
-        //         acc = acc + i;
-        //         i = i + 1.0;
-        //     }
-        //     return acc;
-        // }
-        // Slots:
-        // 1: n
-        // 2: acc
-        // 3: i
         let c_zero = chunk.add_constant(Value::number(0.0));
         let c_one = chunk.add_constant(Value::number(1.0));
 
@@ -136,7 +116,7 @@ mod tests {
         // Loop header
         let loop_start = chunk.count();
 
-        // Condition: (i < n) - loop while true, jump exit if false
+        // Condition: (i < n)
         chunk.write_opcode(Opcode::GetLocal, 1);
         chunk.write_byte(3, 1); // i
         chunk.write_opcode(Opcode::GetLocal, 1);
@@ -191,8 +171,6 @@ mod tests {
             .compile_function(&chunk, 1, "test_loop_sum")
             .expect("JIT compilation failed");
 
-        // Execute native JIT loop compiled down to CPU jump instructions
-        // Sum from i = 1 to i < 11 (i.e. 1..=10) = 55.0
         let native_func: extern "C" fn(f64) -> f64 = unsafe { std::mem::transmute(code_ptr) };
         let sum_10 = native_func(11.0);
         let sum_100 = native_func(101.0);
