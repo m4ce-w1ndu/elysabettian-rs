@@ -7,6 +7,7 @@ edition = "2024"
 ely_core.workspace = true
 ely_compiler.workspace = true
 ely_vm.workspace = true
+ely_jit.workspace = true
 clap.workspace = true
 rustyline.workspace = true
 

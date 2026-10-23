@@ -125,6 +125,7 @@ impl<'a> JitCompiler<'a> {
 
             // Compile-time abstract evaluation stack of Cranelift SSA values
             let mut eval_stack: Vec<Value> = Vec::new();
+            let mut last_computed_value: Option<Value> = None;
             let mut current_block_terminated = false;
 
             let mut ip = 0;
@@ -278,12 +279,15 @@ impl<'a> JitCompiler<'a> {
                     Opcode::Return => {
                         let res = eval_stack
                             .pop()
-                            .ok_or("Stack underflow in Opcode::Return")?;
+                            .or(last_computed_value)
+                            .unwrap_or_else(|| builder.ins().f64const(0.0));
                         builder.ins().return_(&[res]);
                         current_block_terminated = true;
                     }
                     Opcode::Pop => {
-                        eval_stack.pop();
+                        if let Some(val) = eval_stack.pop() {
+                            last_computed_value = Some(val);
+                        }
                     }
                     Opcode::Nop => {}
                     _ => {

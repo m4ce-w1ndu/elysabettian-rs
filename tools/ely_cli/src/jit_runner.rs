@@ -1,0 +1,16 @@
+use ely_core::chunk::Chunk;
+use ely_jit::compiler::JitCompiler;
+use ely_jit::engine::JitEngine;
+
+/// Directly compiles and executes a bytecode chunk using Cranelift JIT natively on the CPU.
+pub fn run_jit(chunk: &Chunk) -> Result<f64, String> {
+    let mut engine = JitEngine::new().map_err(|e| format!("Failed to create JIT engine: {}", e))?;
+    let mut compiler = JitCompiler::new(&mut engine);
+
+    let code_ptr = compiler.compile_arithmetic(chunk, "main_jit")?;
+
+    let native_func: extern "C" fn() -> f64 = unsafe { std::mem::transmute(code_ptr) };
+    let result = native_func();
+
+    Ok(result)
+}
