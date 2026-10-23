@@ -25,6 +25,8 @@ pub struct Chunk {
     pub constants: Vec<Value>,
     /// Compact line metadata table sorted by bytecode offset.
     pub lines: Vec<LineInfo>,
+    /// String literal constants loaded into the VM heap during chunk initialization.
+    pub string_constants: Vec<String>,
 }
 
 impl Chunk {
@@ -96,5 +98,11 @@ impl Chunk {
     #[inline]
     pub const fn count(&self) -> usize {
         self.code.len()
+    }
+
+    /// Appends a string literal constant to the chunk and returns its 0-based index.
+    pub fn add_string_constant(&mut self, s: String) -> usize {
+        self.string_constants.push(s);
+        self.string_constants.len() - 1
     }
 }

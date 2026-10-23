@@ -47,6 +47,11 @@ impl VM {
         // Slot 0 is reserved for the script/caller function (stack convention)
         self.push(Value::null());
         self.frames.push(CallFrame::new(Rc::new(chunk.clone()), 0));
+
+        for s in &chunk.string_constants {
+            self.allocate_object(HeapObject::String(s.clone()));
+        }
+
         self.run()
     }
 
@@ -99,6 +104,40 @@ impl VM {
         }
         let id = value.as_obj() as usize;
         self.heap.get_mut(id)
+    }
+
+    pub fn format_value(&self, value: Value) -> String {
+        if value.is_number() {
+            value.as_number().to_string()
+        } else if value.is_null() {
+            "null".to_string()
+        } else if value.is_bool() {
+            value.as_bool().to_string()
+        } else if value.is_obj() {
+            match self.get_object(value) {
+                Some(HeapObject::String(s)) => s.clone(),
+                Some(HeapObject::Array(elements)) => {
+                    let items: Vec<String> =
+                        elements.iter().map(|&v| self.format_value(v)).collect();
+                    format!("[{}]", items.join(", "))
+                }
+                Some(HeapObject::Class(c)) => format!("<class {}>", c.name),
+                Some(HeapObject::Instance(i)) => format!("<instance of class {}>", i.class_id),
+                Some(HeapObject::Function(f)) => {
+                    if let Some(ref name) = f.name {
+                        format!("<fn {}>", name)
+                    } else {
+                        "<script>".to_string()
+                    }
+                }
+                Some(HeapObject::Closure(_)) => "closure".to_string(),
+                Some(HeapObject::BoundMethod(_)) => "<bound method>".to_string(),
+                Some(HeapObject::Upvalue(_)) => "<upvalue>".to_string(),
+                None => format!("<obj 0x{:x}>", value.as_obj()),
+            }
+        } else {
+            format!("<unknown 0x{:x}>", value.0)
+        }
     }
 
     fn run(&mut self) -> InterpretResult {
@@ -360,10 +399,12 @@ impl VM {
 
                                     let func = match self.heap.get(method_id) {
                                         Some(HeapObject::Function(f)) => f,
-                                        Some(HeapObject::Closure(c)) => match self.heap.get(c.function_id) {
-                                            Some(HeapObject::Function(f)) => f,
-                                            _ => return InterpretResult::RuntimeError,
-                                        },
+                                        Some(HeapObject::Closure(c)) => {
+                                            match self.heap.get(c.function_id) {
+                                                Some(HeapObject::Function(f)) => f,
+                                                _ => return InterpretResult::RuntimeError,
+                                            }
+                                        }
                                         _ => return InterpretResult::RuntimeError,
                                     };
 
@@ -388,7 +429,7 @@ impl VM {
                 }
                 Opcode::Print => {
                     let value = self.pop();
-                    println!("{}", value);
+                    println!("{}", self.format_value(value));
                 }
                 Opcode::CloseUpvalue => {
                     self.close_upvalue(self.stack.len() - 1);
@@ -518,8 +559,10 @@ impl VM {
                                 },
                                 _ => return InterpretResult::RuntimeError,
                             };
-                            let bound_obj = crate::heap::ObjBoundMethod::new(instance_val, method_id);
-                            let bound_val = self.allocate_object(HeapObject::BoundMethod(bound_obj));
+                            let bound_obj =
+                                crate::heap::ObjBoundMethod::new(instance_val, method_id);
+                            let bound_val =
+                                self.allocate_object(HeapObject::BoundMethod(bound_obj));
                             self.push(bound_val);
                         }
                     } else {
@@ -625,7 +668,8 @@ impl VM {
                                     let slots = self.stack.len() - arg_count - 1;
                                     let chunk = func.chunk.clone();
                                     let closure_id = val.as_obj() as usize;
-                                    self.frames.push(CallFrame::with_closure(chunk, slots, closure_id));
+                                    self.frames
+                                        .push(CallFrame::with_closure(chunk, slots, closure_id));
                                 }
                                 _ => return InterpretResult::RuntimeError,
                             }
@@ -658,7 +702,8 @@ impl VM {
 
                         let slots = self.stack.len() - arg_count - 1;
                         if let Some(cid) = closure_id {
-                            self.frames.push(CallFrame::with_closure(func_chunk, slots, cid));
+                            self.frames
+                                .push(CallFrame::with_closure(func_chunk, slots, cid));
                         } else {
                             self.frames.push(CallFrame::new(func_chunk, slots));
                         }
@@ -696,7 +741,8 @@ impl VM {
 
                     let slots = self.stack.len() - arg_count - 1;
                     if let Some(cid) = closure_id {
-                        self.frames.push(CallFrame::with_closure(func_chunk, slots, cid));
+                        self.frames
+                            .push(CallFrame::with_closure(func_chunk, slots, cid));
                     } else {
                         self.frames.push(CallFrame::new(func_chunk, slots));
                     }

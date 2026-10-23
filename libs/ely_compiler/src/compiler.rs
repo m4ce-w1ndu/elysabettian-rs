@@ -306,9 +306,9 @@ impl<'a> Compiler<'a> {
     fn string(&mut self) {
         let lexeme = self.parser.previous.lexeme;
         let value = &lexeme[1..lexeme.len() - 1];
-        let string_id = self.interner.intern(value);
+        let string_idx = self.chunk.add_string_constant(value.to_string());
 
-        self.emit_constant(Value::obj(string_id as u64));
+        self.emit_constant(Value::obj(string_idx as u64));
     }
 
     /// Parses an expression with precedence equal to or greater than the specified level.
@@ -1245,9 +1245,9 @@ mod tests {
             Opcode::GetLocal, // b (slot 2)
             Opcode::Add,
             Opcode::Print,
-            Opcode::Nop,    // implicit return null of function
+            Opcode::Nop, // implicit return null of function
             Opcode::Return,
-            Opcode::Nop,    // implicit return null of script
+            Opcode::Nop, // implicit return null of script
             Opcode::Return,
         ];
 
