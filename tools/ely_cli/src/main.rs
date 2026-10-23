@@ -23,14 +23,14 @@ fn main() {
     }
 
     if let Some(cmd) = cli.command {
-        match run_source(&cmd, &mut vm, &mut interner, cli.jit) {
+        match run_source(&cmd, &mut vm, &mut interner, cli.jit, cli.dump_ir, cli.dump_asm) {
             InterpretResult::Ok => (),
             InterpretResult::CompileError => process::exit(65),
             InterpretResult::RuntimeError => process::exit(70),
         }
     } else if let Some(path) = cli.script {
-        run_file(&path, &mut vm, &mut interner, cli.jit);
+        run_file(&path, &mut vm, &mut interner, cli.jit, cli.dump_ir, cli.dump_asm);
     } else {
-        run_repl(&mut vm, &mut interner, cli.jit);
+        run_repl(&mut vm, &mut interner, cli.jit, cli.dump_ir, cli.dump_asm);
     }
 }

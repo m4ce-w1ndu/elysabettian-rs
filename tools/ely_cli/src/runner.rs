@@ -14,6 +14,8 @@ pub fn run_source(
     vm: &mut VM,
     interner: &mut StringInterner,
     jit_only: bool,
+    dump_ir: bool,
+    dump_asm: bool,
 ) -> InterpretResult {
     let chunk = match compile(source, interner) {
         Some(chunk) => chunk,
@@ -21,7 +23,7 @@ pub fn run_source(
     };
 
     if jit_only {
-        match run_jit(&chunk) {
+        match run_jit(&chunk, dump_ir, dump_asm) {
             Ok(_) => InterpretResult::Ok,
             Err(err) => {
                 eprintln!("JIT Execution Error: {}", err);
@@ -34,7 +36,14 @@ pub fn run_source(
 }
 
 /// Reads a source script file and executes it.
-pub fn run_file(path: &PathBuf, vm: &mut VM, interner: &mut StringInterner, jit_only: bool) {
+pub fn run_file(
+    path: &PathBuf,
+    vm: &mut VM,
+    interner: &mut StringInterner,
+    jit_only: bool,
+    dump_ir: bool,
+    dump_asm: bool,
+) {
     let source = match fs::read_to_string(path) {
         Ok(content) => content,
         Err(err) => {
@@ -43,7 +52,7 @@ pub fn run_file(path: &PathBuf, vm: &mut VM, interner: &mut StringInterner, jit_
         }
     };
 
-    match run_source(&source, vm, interner, jit_only) {
+    match run_source(&source, vm, interner, jit_only, dump_ir, dump_asm) {
         InterpretResult::Ok => (),
         InterpretResult::CompileError => process::exit(65),
         InterpretResult::RuntimeError => process::exit(70),

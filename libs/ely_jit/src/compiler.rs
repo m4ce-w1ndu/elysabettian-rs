@@ -11,12 +11,18 @@ use crate::engine::JitEngine;
 /// Compiles Elysabettian bytecode chunks into native machine code functions using Cranelift JIT.
 pub struct JitCompiler<'a> {
     engine: &'a mut JitEngine,
+    pub dump_ir: bool,
+    pub dump_asm: bool,
 }
 
 impl<'a> JitCompiler<'a> {
     /// Initializes a new JIT compiler attached to the provided JIT engine instance.
     pub fn new(engine: &'a mut JitEngine) -> Self {
-        Self { engine }
+        Self {
+            engine,
+            dump_ir: false,
+            dump_asm: false,
+        }
     }
 
     /// Compiles an arithmetic bytecode chunk into a native `extern "C" fn() -> f64` executable function.
@@ -414,11 +420,31 @@ impl<'a> JitCompiler<'a> {
             builder.finalize();
         }
 
+        if self.dump_ir {
+            println!("=== Cranelift IR [{}] ===", name);
+            println!("{}", self.engine.ctx.func);
+        }
+
+        if self.dump_asm {
+            self.engine.ctx.set_disasm(true);
+        }
+
         // Define function body in the JIT module and finalize code emission
         self.engine
             .module
             .define_function(func_id, &mut self.engine.ctx)
             .map_err(|e| e.to_string())?;
+
+        if self.dump_asm {
+            if let Some(compiled_code) = self.engine.ctx.compiled_code() {
+                println!("=== Machine Code Disassembly [{}] ===", name);
+                if let Some(ref disasm) = compiled_code.vcode {
+                    println!("{}", disasm);
+                } else {
+                    println!("Binary size: {} bytes", compiled_code.buffer.data().len());
+                }
+            }
+        }
 
         self.engine.module.clear_context(&mut self.engine.ctx);
         self.engine

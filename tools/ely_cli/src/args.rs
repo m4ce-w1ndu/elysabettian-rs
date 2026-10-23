@@ -25,4 +25,12 @@ pub struct Cli {
     /// Disable dynamic JIT tier-up in VM interpreter
     #[arg(long = "no-jit")]
     pub no_jit: bool,
+
+    /// Print generated Cranelift intermediate representation (IR)
+    #[arg(long = "dump-ir")]
+    pub dump_ir: bool,
+
+    /// Print generated machine code disassembly (ASM)
+    #[arg(long = "dump-asm")]
+    pub dump_asm: bool,
 }

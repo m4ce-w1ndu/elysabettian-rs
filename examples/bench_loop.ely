@@ -1,0 +1,9 @@
+// Compute the sum of the first 2,000,000 positive integers
+var total = 0;
+var limit = 2000000;
+
+for (var i = 1; i <= limit; i = i + 1) {
+    total = total + i;
+}
+
+print total;

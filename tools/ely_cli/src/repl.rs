@@ -6,7 +6,13 @@ use rustyline::DefaultEditor;
 use crate::runner::run_source;
 
 /// Starts the interactive Read-Eval-Print Loop for Elysabettian.
-pub fn run_repl(vm: &mut VM, interner: &mut StringInterner, jit_only: bool) {
+pub fn run_repl(
+    vm: &mut VM,
+    interner: &mut StringInterner,
+    jit_only: bool,
+    dump_ir: bool,
+    dump_asm: bool,
+) {
     let mode = if jit_only { "JIT Native Mode" } else { "VM Tier-up Mode" };
     println!("Elysabettian REPL (v0.1.0) [{}]", mode);
     println!("Type 'exit' or press Ctrl+D to exit.\n");
@@ -32,7 +38,7 @@ pub fn run_repl(vm: &mut VM, interner: &mut StringInterner, jit_only: bool) {
                 }
 
                 let _ = rl.add_history_entry(line.as_str());
-                run_source(&line, vm, interner, jit_only);
+                run_source(&line, vm, interner, jit_only, dump_ir, dump_asm);
             }
             Err(ReadlineError::Interrupted) => {
                 println!("^C");
