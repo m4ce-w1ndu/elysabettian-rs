@@ -6,6 +6,21 @@ use ely_core::value::Value;
 // Thread-local runtime context for JIT native execution
 thread_local! {
     static JIT_GLOBALS: RefCell<HashMap<u32, Value>> = RefCell::new(HashMap::new());
+    static JIT_STRINGS: RefCell<Vec<String>> = RefCell::new(Vec::new());
+}
+
+/// Registers string constants for the current JIT compilation session.
+pub fn register_jit_strings(strings: &[String]) {
+    JIT_STRINGS.with(|s| {
+        *s.borrow_mut() = strings.to_vec();
+    });
+}
+
+/// Appends string constants to the current JIT compilation session.
+pub fn append_jit_strings(strings: &[String]) {
+    JIT_STRINGS.with(|s| {
+        s.borrow_mut().extend(strings.iter().cloned());
+    });
 }
 
 /// Sets or defines a global variable in the JIT runtime state.
@@ -36,6 +51,20 @@ pub extern "C" fn ely_jit_print_value(val_bits: u64) {
         println!("null");
     } else if value.is_bool() {
         println!("{}", value.as_bool());
+    } else if value.is_obj() {
+        let string_idx = value.as_obj() as usize;
+        let printed = JIT_STRINGS.with(|strings| {
+            if let Some(s) = strings.borrow().get(string_idx) {
+                println!("{}", s);
+                true
+            } else {
+                false
+            }
+        });
+
+        if !printed {
+            println!("{}", value);
+        }
     } else {
         println!("{}", value);
     }
