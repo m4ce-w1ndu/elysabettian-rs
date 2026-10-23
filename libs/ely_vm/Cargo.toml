@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 ely_core.workspace = true
 ely_compiler.workspace = true
+ely_jit.workspace = true

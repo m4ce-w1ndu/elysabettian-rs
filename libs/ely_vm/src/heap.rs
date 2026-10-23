@@ -71,6 +71,8 @@ pub struct ObjFunction {
     pub upvalue_count: usize,
     pub chunk: Rc<Chunk>,
     pub name: Option<String>,
+    pub invocation_count: usize,
+    pub jit_entry: Option<*const u8>,
 }
 
 impl ObjFunction {
@@ -81,6 +83,8 @@ impl ObjFunction {
             upvalue_count: 0,
             chunk: Rc::new(Chunk::new()),
             name,
+            invocation_count: 0,
+            jit_entry: None,
         }
     }
 }

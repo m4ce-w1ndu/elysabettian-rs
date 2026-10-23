@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::mem;
 use std::rc::Rc;
 
 use crate::heap::{HeapObject, ObjUpvalue};
@@ -18,6 +19,9 @@ pub type NativeFn = fn(arg_count: u8, args: &[Value]) -> Value;
 
 pub const MAX_FRAMES: usize = 64;
 
+/// Hot path invocation threshold
+pub const JIT_HOT_THRESHOLD: usize = 50;
+
 /// The virtual machine responsible for executing compiled bytecode chunks.
 pub struct VM {
     pub stack: Vec<Value>,
@@ -26,6 +30,7 @@ pub struct VM {
     pub natives: HashMap<u32, NativeFn>,
     pub heap: Vec<HeapObject>,
     pub open_upvalues: Vec<usize>,
+    pub jit_engine: Option<ely_jit::engine::JitEngine>,
 }
 
 impl VM {
@@ -38,6 +43,7 @@ impl VM {
             natives: HashMap::new(),
             heap: Vec::new(),
             open_upvalues: Vec::new(),
+            jit_engine: ely_jit::engine::JitEngine::new().ok(),
         }
     }
 
@@ -349,21 +355,33 @@ impl VM {
                             self.stack.truncate(args_start - 1);
                             self.push(result);
                         } else {
-                            match self.get_object(callee) {
-                                Some(HeapObject::Function(func)) => {
-                                    if arg_count != func.arity {
-                                        return InterpretResult::RuntimeError;
+                            let func_id = callee.as_obj() as usize;
+                            let is_func = matches!(self.heap.get(func_id), Some(HeapObject::Function(_)));
+                            if is_func {
+                                match self.try_call_jit(func_id, arg_count) {
+                                    Ok(true) => {
+                                        // Executed natively via JIT
                                     }
+                                    Ok(false) => {
+                                        let func = match self.heap.get(func_id) {
+                                            Some(HeapObject::Function(f)) => f,
+                                            _ => return InterpretResult::RuntimeError,
+                                        };
 
-                                    if self.frames.len() == MAX_FRAMES {
-                                        return InterpretResult::RuntimeError;
+                                        if self.frames.len() == MAX_FRAMES {
+                                            return InterpretResult::RuntimeError;
+                                        }
+
+                                        let slots = self.stack.len() - arg_count - 1;
+                                        let chunk = func.chunk.clone();
+                                        self.frames.push(CallFrame::new(chunk, slots));
                                     }
-
-                                    let slots = self.stack.len() - arg_count - 1;
-                                    let chunk = func.chunk.clone();
-                                    self.frames.push(CallFrame::new(chunk, slots));
+                                    Err(err) => return err,
                                 }
-                                Some(HeapObject::Closure(closure)) => {
+                            } else {
+                                match self.get_object(callee) {
+                                    Some(HeapObject::Function(_)) => unreachable!(),
+                                    Some(HeapObject::Closure(closure)) => {
                                     let func = match self.heap.get(closure.function_id) {
                                         Some(HeapObject::Function(f)) => f,
                                         _ => return InterpretResult::RuntimeError,
@@ -422,6 +440,7 @@ impl VM {
                                 }
                                 _ => return InterpretResult::RuntimeError,
                             }
+                        }
                         }
                     } else {
                         return InterpretResult::RuntimeError;
@@ -751,6 +770,65 @@ impl VM {
         }
     }
 
+    fn try_call_jit(&mut self, func_id: usize, arg_count: usize) -> Result<bool, InterpretResult> {
+        let (arity, chunk, is_hot, existing_jit) = match self.heap.get_mut(func_id) {
+            Some(HeapObject::Function(func)) => {
+                if arg_count != func.arity {
+                    return Err(InterpretResult::RuntimeError);
+                }
+
+                func.invocation_count += 1;
+                let is_hot = func.invocation_count >= JIT_HOT_THRESHOLD && func.jit_entry.is_none();
+                (func.arity, func.chunk.clone(), is_hot, func.jit_entry)
+            }
+            _ => return Err(InterpretResult::RuntimeError),
+        };
+
+        let mut compiled_jit = None;
+
+        if is_hot {
+            if let Some(ref mut engine) = self.jit_engine {
+                let func_name = format!("jit_fn_{}", func_id);
+                let mut compiler = ely_jit::compiler::JitCompiler::new(engine);
+                if let Ok(code_ptr) = compiler.compile_function(&chunk, arity, &func_name) {
+                    compiled_jit = Some(code_ptr);
+                    if let Some(HeapObject::Function(func)) = self.heap.get_mut(func_id) {
+                        func.jit_entry = Some(code_ptr);
+                    }
+                }
+            }
+        }
+
+        if let Some(code_ptr) = existing_jit.or(compiled_jit) {
+            let result_num = match arity {
+                0 => {
+                    let native_fn: extern "C" fn() -> f64 = unsafe { mem::transmute(code_ptr) };
+                    native_fn()
+                }
+                1 => {
+                    let native_fn: extern "C" fn(f64) -> f64 = unsafe { mem::transmute(code_ptr) };
+                    let arg0 = self.stack[self.stack.len() - 1].as_number();
+                    native_fn(arg0)
+                }
+                2 => {
+                    let native_fn: extern "C" fn(f64, f64) -> f64 =
+                        unsafe { mem::transmute(code_ptr) };
+                    let arg0 = self.stack[self.stack.len() - 2].as_number();
+                    let arg1 = self.stack[self.stack.len() - 1].as_number();
+                    native_fn(arg0, arg1)
+                }
+                _ => return Ok(false),
+            };
+
+            self.stack.truncate(self.stack.len() - arg_count - 1);
+            self.push(Value::number(result_num));
+
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
     fn binary_op<F>(&mut self, op: F) -> bool
     where
         F: FnOnce(f64, f64) -> f64,
@@ -1072,5 +1150,65 @@ mod tests {
         let result = vm.interpret(&chunk);
         assert_eq!(result, InterpretResult::Ok);
         assert_eq!(vm.peek(0), Value::number(42.0));
+    }
+
+    #[test]
+    fn test_vm_jit_hot_path_tier_up() {
+        let mut vm = VM::new();
+
+        // Target function: func add(a, b) { return a + b; }
+        let mut add_chunk = Chunk::new();
+        add_chunk.write_opcode(Opcode::GetLocal, 1);
+        add_chunk.write_byte(1, 1); // a
+        add_chunk.write_opcode(Opcode::GetLocal, 1);
+        add_chunk.write_byte(2, 1); // b
+        add_chunk.write_opcode(Opcode::Add, 1);
+        add_chunk.write_opcode(Opcode::Return, 1);
+
+        let mut add_func = crate::heap::ObjFunction::new(2, Some("add".to_string()));
+        add_func.chunk = Rc::new(add_chunk);
+        let add_func_val = vm.allocate_object(HeapObject::Function(add_func));
+
+        // Call the function 60 times (> JIT_HOT_THRESHOLD = 50)
+        let mut chunk = Chunk::new();
+        let add_const = chunk.add_constant(add_func_val);
+        let c_one = chunk.add_constant(Value::number(1.0));
+        let c_two = chunk.add_constant(Value::number(2.0));
+
+        for _ in 0..60 {
+            chunk.write_opcode(Opcode::Constant, 1);
+            chunk.write_byte(add_const as u8, 1);
+            chunk.write_opcode(Opcode::Constant, 1);
+            chunk.write_byte(c_one as u8, 1);
+            chunk.write_opcode(Opcode::Constant, 1);
+            chunk.write_byte(c_two as u8, 1);
+            chunk.write_opcode(Opcode::Call, 1);
+            chunk.write_byte(2, 1);
+            chunk.write_opcode(Opcode::Pop, 1);
+        }
+
+        // 61st call: keep result on stack
+        chunk.write_opcode(Opcode::Constant, 1);
+        chunk.write_byte(add_const as u8, 1);
+        chunk.write_opcode(Opcode::Constant, 1);
+        chunk.write_byte(c_one as u8, 1);
+        chunk.write_opcode(Opcode::Constant, 1);
+        chunk.write_byte(c_two as u8, 1);
+        chunk.write_opcode(Opcode::Call, 1);
+        chunk.write_byte(2, 1);
+        chunk.write_opcode(Opcode::Return, 1);
+
+        let result = vm.interpret(&chunk);
+        assert_eq!(result, InterpretResult::Ok);
+        assert_eq!(vm.peek(0), Value::number(3.0));
+
+        // Verify that the function was tiered-up to native JIT execution!
+        let func_obj = vm.get_object(add_func_val).unwrap();
+        if let HeapObject::Function(f) = func_obj {
+            assert!(f.invocation_count >= 50);
+            assert!(f.jit_entry.is_some(), "Function was not tiered-up to JIT!");
+        } else {
+            panic!("Expected function object");
+        }
     }
 }
