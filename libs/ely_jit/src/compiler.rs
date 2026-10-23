@@ -1,3 +1,5 @@
+use std::collections::{BTreeSet, HashMap};
+
 use cranelift::prelude::*;
 use cranelift_module::{Linkage, Module};
 use ely_core::chunk::Chunk;
@@ -51,13 +53,10 @@ impl<'a> JitCompiler<'a> {
                 &mut self.engine.builder_context,
             );
 
-            // Create and configure entry block
-            let entry_block = builder.create_block();
-            builder.append_block_params_for_function_params(entry_block);
-            builder.switch_to_block(entry_block);
-            builder.seal_block(entry_block);
+            // Pre-pass: scan chunk to find branch targets and maximum local slot
+            let mut branch_targets = BTreeSet::new();
+            branch_targets.insert(0); // Entry block offset
 
-            // Track maximum local slot accessed to pre-declare SSA variables
             let mut max_local = arity;
             let mut scan_ip = 0;
             while scan_ip < chunk.count() {
@@ -72,13 +71,40 @@ impl<'a> JitCompiler<'a> {
                             }
                         }
                         Opcode::Constant => scan_ip += 1,
-                        Opcode::Jump | Opcode::JumpIfFalse | Opcode::Loop => scan_ip += 2,
+                        Opcode::Jump | Opcode::JumpIfFalse => {
+                            let high = chunk.code[scan_ip] as usize;
+                            let low = chunk.code[scan_ip + 1] as usize;
+                            let offset = (high << 8) | low;
+                            scan_ip += 2;
+                            let target = scan_ip + offset;
+                            branch_targets.insert(target);
+                            branch_targets.insert(scan_ip); // Fallthrough block
+                        }
+                        Opcode::Loop => {
+                            let high = chunk.code[scan_ip] as usize;
+                            let low = chunk.code[scan_ip + 1] as usize;
+                            let offset = (high << 8) | low;
+                            scan_ip += 2;
+                            let target = scan_ip - offset;
+                            branch_targets.insert(target);
+                            branch_targets.insert(scan_ip);
+                        }
                         _ => {}
                     }
                 } else {
                     scan_ip += 1;
                 }
             }
+
+            // Create Cranelift basic blocks for each branch target
+            let mut blocks: HashMap<usize, Block> = HashMap::new();
+            for &target in &branch_targets {
+                blocks.insert(target, builder.create_block());
+            }
+
+            let entry_block = *blocks.get(&0).unwrap();
+            builder.append_block_params_for_function_params(entry_block);
+            builder.switch_to_block(entry_block);
 
             // Declare Cranelift SSA variables for each local slot (registers)
             let mut vars = Vec::with_capacity(max_local + 1);
@@ -89,8 +115,6 @@ impl<'a> JitCompiler<'a> {
             }
 
             // Bind incoming function arguments to the corresponding local slots
-            // Slot 0 in Elysabettian convention is reserved for callee/receiver
-            // Function parameters start at slot 1 ..= arity
             let params = builder.block_params(entry_block).to_vec();
             for (idx, &param_val) in params.iter().enumerate() {
                 let slot = idx + 1;
@@ -101,9 +125,21 @@ impl<'a> JitCompiler<'a> {
 
             // Compile-time abstract evaluation stack of Cranelift SSA values
             let mut eval_stack: Vec<Value> = Vec::new();
+            let mut current_block_terminated = false;
 
             let mut ip = 0;
             while ip < chunk.count() {
+                // If the current IP is a known branch target and not entry at start, transition blocks
+                if ip > 0 {
+                    if let Some(&block) = blocks.get(&ip) {
+                        if !current_block_terminated {
+                            builder.ins().jump(block, &[]);
+                        }
+                        builder.switch_to_block(block);
+                        current_block_terminated = false;
+                    }
+                }
+
                 let op = Opcode::try_from(chunk.code[ip])
                     .map_err(|_| format!("Invalid opcode byte at offset {}", ip))?;
                 ip += 1;
@@ -168,18 +204,97 @@ impl<'a> JitCompiler<'a> {
                             .ok_or("Stack underflow in Opcode::Negate")?;
                         eval_stack.push(builder.ins().fneg(a));
                     }
+                    Opcode::Less => {
+                        let b = eval_stack.pop().ok_or("Stack underflow in Opcode::Less")?;
+                        let a = eval_stack.pop().ok_or("Stack underflow in Opcode::Less")?;
+                        let cmp = builder.ins().fcmp(FloatCC::LessThan, a, b);
+                        let true_val = builder.ins().f64const(1.0);
+                        let false_val = builder.ins().f64const(0.0);
+                        let res = builder.ins().select(cmp, true_val, false_val);
+                        eval_stack.push(res);
+                    }
+                    Opcode::Greater => {
+                        let b = eval_stack
+                            .pop()
+                            .ok_or("Stack underflow in Opcode::Greater")?;
+                        let a = eval_stack
+                            .pop()
+                            .ok_or("Stack underflow in Opcode::Greater")?;
+                        let cmp = builder.ins().fcmp(FloatCC::GreaterThan, a, b);
+                        let true_val = builder.ins().f64const(1.0);
+                        let false_val = builder.ins().f64const(0.0);
+                        let res = builder.ins().select(cmp, true_val, false_val);
+                        eval_stack.push(res);
+                    }
+                    Opcode::Equal => {
+                        let b = eval_stack.pop().ok_or("Stack underflow in Opcode::Equal")?;
+                        let a = eval_stack.pop().ok_or("Stack underflow in Opcode::Equal")?;
+                        let cmp = builder.ins().fcmp(FloatCC::Equal, a, b);
+                        let true_val = builder.ins().f64const(1.0);
+                        let false_val = builder.ins().f64const(0.0);
+                        let res = builder.ins().select(cmp, true_val, false_val);
+                        eval_stack.push(res);
+                    }
+                    Opcode::Jump => {
+                        let high = chunk.code[ip] as usize;
+                        let low = chunk.code[ip + 1] as usize;
+                        let offset = (high << 8) | low;
+                        ip += 2;
+                        let target = ip + offset;
+                        let target_block = *blocks.get(&target).unwrap();
+                        builder.ins().jump(target_block, &[]);
+                        current_block_terminated = true;
+                    }
+                    Opcode::JumpIfFalse => {
+                        let high = chunk.code[ip] as usize;
+                        let low = chunk.code[ip + 1] as usize;
+                        let offset = (high << 8) | low;
+                        ip += 2;
+                        let target = ip + offset;
+                        let target_block = *blocks.get(&target).unwrap();
+                        let fallthrough_block = *blocks.get(&ip).unwrap();
+
+                        let cond_val = *eval_stack
+                            .last()
+                            .ok_or("Stack underflow in JumpIfFalse")?;
+                        let zero = builder.ins().f64const(0.0);
+                        let is_falsy = builder.ins().fcmp(FloatCC::Equal, cond_val, zero);
+
+                        builder
+                            .ins()
+                            .brif(is_falsy, target_block, &[], fallthrough_block, &[]);
+                        current_block_terminated = true;
+                    }
+                    Opcode::Loop => {
+                        let high = chunk.code[ip] as usize;
+                        let low = chunk.code[ip + 1] as usize;
+                        let offset = (high << 8) | low;
+                        ip += 2;
+                        let target = ip - offset;
+                        let target_block = *blocks.get(&target).unwrap();
+                        builder.ins().jump(target_block, &[]);
+                        current_block_terminated = true;
+                    }
                     Opcode::Return => {
                         let res = eval_stack
                             .pop()
                             .ok_or("Stack underflow in Opcode::Return")?;
                         builder.ins().return_(&[res]);
-                        break;
+                        current_block_terminated = true;
                     }
-                    Opcode::Pop | Opcode::Nop => {}
+                    Opcode::Pop => {
+                        eval_stack.pop();
+                    }
+                    Opcode::Nop => {}
                     _ => {
                         return Err(format!("Unsupported opcode for JIT: {:?}", op));
                     }
                 }
+            }
+
+            // Seal all blocks after CFG generation is complete
+            for &block in blocks.values() {
+                builder.seal_block(block);
             }
 
             builder.finalize();

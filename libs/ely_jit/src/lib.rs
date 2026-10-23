@@ -96,4 +96,108 @@ mod tests {
 
         assert_eq!(result, 25.0);
     }
+
+    #[test]
+    fn test_jit_loop_and_conditionals() {
+        let mut engine = JitEngine::new().expect("Failed to create JIT engine");
+        let mut chunk = Chunk::new();
+
+        // Native function calculating sum of 1..=n:
+        // func sum_to(n) {
+        //     var acc = 0.0;
+        //     var i = 1.0;
+        //     while (i <= n) {
+        //         acc = acc + i;
+        //         i = i + 1.0;
+        //     }
+        //     return acc;
+        // }
+        // Slots:
+        // 1: n
+        // 2: acc
+        // 3: i
+        let c_zero = chunk.add_constant(Value::number(0.0));
+        let c_one = chunk.add_constant(Value::number(1.0));
+
+        // acc = 0.0 (slot 2)
+        chunk.write_opcode(Opcode::Constant, 1);
+        chunk.write_byte(c_zero as u8, 1);
+        chunk.write_opcode(Opcode::SetLocal, 1);
+        chunk.write_byte(2, 1);
+        chunk.write_opcode(Opcode::Pop, 1);
+
+        // i = 1.0 (slot 3)
+        chunk.write_opcode(Opcode::Constant, 1);
+        chunk.write_byte(c_one as u8, 1);
+        chunk.write_opcode(Opcode::SetLocal, 1);
+        chunk.write_byte(3, 1);
+        chunk.write_opcode(Opcode::Pop, 1);
+
+        // Loop header
+        let loop_start = chunk.count();
+
+        // Condition: (i < n) - loop while true, jump exit if false
+        chunk.write_opcode(Opcode::GetLocal, 1);
+        chunk.write_byte(3, 1); // i
+        chunk.write_opcode(Opcode::GetLocal, 1);
+        chunk.write_byte(1, 1); // n
+        chunk.write_opcode(Opcode::Less, 1); // (i < n)
+        chunk.write_opcode(Opcode::JumpIfFalse, 1);
+        let exit_jump_idx = chunk.count();
+        chunk.write_byte(0xff, 1);
+        chunk.write_byte(0xff, 1);
+        chunk.write_opcode(Opcode::Pop, 1);
+
+        // Body: acc = acc + i
+        chunk.write_opcode(Opcode::GetLocal, 1);
+        chunk.write_byte(2, 1); // acc
+        chunk.write_opcode(Opcode::GetLocal, 1);
+        chunk.write_byte(3, 1); // i
+        chunk.write_opcode(Opcode::Add, 1);
+        chunk.write_opcode(Opcode::SetLocal, 1);
+        chunk.write_byte(2, 1);
+        chunk.write_opcode(Opcode::Pop, 1);
+
+        // Increment: i = i + 1.0
+        chunk.write_opcode(Opcode::GetLocal, 1);
+        chunk.write_byte(3, 1); // i
+        chunk.write_opcode(Opcode::Constant, 1);
+        chunk.write_byte(c_one as u8, 1);
+        chunk.write_opcode(Opcode::Add, 1);
+        chunk.write_opcode(Opcode::SetLocal, 1);
+        chunk.write_byte(3, 1);
+        chunk.write_opcode(Opcode::Pop, 1);
+
+        // Loop back to loop_start
+        chunk.write_opcode(Opcode::Loop, 1);
+        let loop_offset = chunk.count() + 2 - loop_start;
+        chunk.write_byte(((loop_offset >> 8) & 0xff) as u8, 1);
+        chunk.write_byte((loop_offset & 0xff) as u8, 1);
+
+        // Loop exit target: patch JumpIfFalse
+        let exit_target = chunk.count();
+        let forward_offset = exit_target - exit_jump_idx - 2;
+        chunk.code[exit_jump_idx] = ((forward_offset >> 8) & 0xff) as u8;
+        chunk.code[exit_jump_idx + 1] = (forward_offset & 0xff) as u8;
+
+        // return acc
+        chunk.write_opcode(Opcode::Pop, 1);
+        chunk.write_opcode(Opcode::GetLocal, 1);
+        chunk.write_byte(2, 1);
+        chunk.write_opcode(Opcode::Return, 1);
+
+        let mut compiler = JitCompiler::new(&mut engine);
+        let code_ptr = compiler
+            .compile_function(&chunk, 1, "test_loop_sum")
+            .expect("JIT compilation failed");
+
+        // Execute native JIT loop compiled down to CPU jump instructions
+        // Sum from i = 1 to i < 11 (i.e. 1..=10) = 55.0
+        let native_func: extern "C" fn(f64) -> f64 = unsafe { std::mem::transmute(code_ptr) };
+        let sum_10 = native_func(11.0);
+        let sum_100 = native_func(101.0);
+
+        assert_eq!(sum_10, 55.0);
+        assert_eq!(sum_100, 5050.0);
+    }
 }
