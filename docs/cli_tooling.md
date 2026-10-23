@@ -60,36 +60,31 @@ Elysabettian Native JIT!
 
 ---
 
-## 3. Performance Benchmarking Tool
+## 3. Scientific Performance Benchmarking Suite
 
-An automated Python benchmarking tool is provided in `tools/benchmark.py`:
+An automated statistical benchmarking tool is provided in [`tools/benchmark.py`](../tools/benchmark.py):
 
 ```shell
 python3 tools/benchmark.py
 ```
 
-### What it does:
-1. Builds `ely_cli` in optimized release mode (`cargo build --release -p ely_cli`).
-2. Runs the benchmark script [`examples/bench_loop.ely`](../examples/bench_loop.ely) (a loop with 2,000,000 iterations and arithmetic accumulation).
-3. Compares the average execution time between:
-   - **Bytecode Virtual Machine** (`--no-jit`)
-   - **Native Cranelift JIT** (`--jit`)
-4. Verifies output correctness across both engines and computes the speedup factor.
+### Benchmark Methodology & Workloads
+The suite runs 5 diverse algorithmic workloads:
+- **`bench_loop.ely`**: Simple accumulator loop (2,000,000 iterations).
+- **`bench_arithmetic.ely`**: Transcendental math ($+, -, *, /$ with $\pi$ and $e$, 2,000,000 iterations).
+- **`bench_fibonacci.ely`**: Iterative Fibonacci with register shifts (1,000,000 iterations).
+- **`bench_leibniz_pi.ely`**: Leibniz infinite series for $\pi$ with alternating sign (5,000,000 iterations).
+- **`bench_collatz.ely`**: Collatz 3n+1 trajectory steps with bitwise shifts (25,000 ranges).
 
-### Sample Output:
-```text
-[*] Compiling ely_cli in release mode (cargo build --release)...
-[+] Build successful!
+Each test runs **2 warmup iterations** followed by **5 timed evaluation runs**. The tool calculates:
+- Sample Mean ($\mu$)
+- Sample Standard Deviation ($\sigma$)
+- Speedup factor ($\mu_{VM} / \mu_{JIT}$)
+- Bit-exact numerical result verification between VM and JIT.
 
-[*] Running benchmark on: .../examples/bench_loop.ely
-[*] Benchmark task: Loop with 2,000,000 iterations and accumulator
-
--------------------------------------------------------
-Execution Mode            | Average Time (s) | Result
--------------------------------------------------------
-VM Interpreter (--no-jit) | 0.5852          | 2000001000000
-Native JIT (--jit)        | 0.2327          | 2000001000000
--------------------------------------------------------
-
-🚀 Cranelift JIT is 2.51x faster than the VM interpreter!
-```
+### Graphical Artifacts & Reports
+Outputs are automatically written to `tools/results/`:
+- `benchmark_execution_times.png`: Grouped bar chart comparing Mean Execution Times with $\pm \sigma$ error bars.
+- `benchmark_speedup.png`: Horizontal bar chart of Cranelift JIT speedup factors across all workloads.
+- `BENCHMARK_REPORT.md`: Comprehensive Markdown report with summary tables.
+- `benchmark_data.json`: Raw benchmark metrics for further analysis.
