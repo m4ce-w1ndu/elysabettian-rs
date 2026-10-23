@@ -10,37 +10,52 @@ Elysabettian is a lightweight, dynamically typed scripting language featuring a 
 
 ### Key Goals & Highlights
 
-- **Safety & Predictability:** Eliminates manual memory bugs and cyclic reference leaks by leveraging Rust's ownership model and arena-based garbage collection.
-- **True JIT Compilation:** Replaces pure bytecode interpretation with dynamic machine code generation using Cranelift, optimizing hot loops and numeric paths directly into native instructions.
-- **Compact Value Representation:** Engineered around cache-friendly value representations (tagged unions and NaN-boxing) to drastically reduce memory footprint and CPU cache thrashing.
-- **Modular Workspace Architecture:** Clear separation of concerns between compilation, bytecode generation, runtime execution, and native code generation.
+- **Safety & Predictability:** Eliminates manual memory bugs by leveraging Rust's memory safety guarantees and modular crate structure.
+- **True JIT Compilation:** Generates native machine code (x86_64 / AArch64) using Cranelift, turning hot paths, loops, and numeric arithmetic into direct CPU instructions.
+- **Compact Value Representation:** Engineered around IEEE-754 64-bit NaN-boxing (`sizeof(Value) == 8`) to maximize CPU L1/L2 cache locality.
+- **Multi-Tier Execution:** Seamlessly runs through a fast bytecode interpreter while automatically promoting hot functions to JIT machine code at runtime.
+- **Developer & Compiler Tooling:** First-class inspection flags (`--dump-ir`, `--dump-asm`), interactive REPL with history, and automated benchmarking.
 
 ---
 
 ## Workspace Architecture
 
-The project is structured as a multi-package Cargo workspace:
+The repository is organized as a modular Cargo workspace:
 
 ```text
 elysabettian-rs/
 ├── libs/
-│   ├── ely_core         # Shared primitive types, bytecode definitions, opcodes, and chunks
-│   ├── ely_compiler     # Lexer, Pratt parser, and bytecode compiler
-│   ├── ely_vm           # Stack-based runtime, object allocators, and standard libraries
-│   └── ely_jit          # Cranelift IR translator, JIT engine, and execution trampolines
+│   ├── ely_core         # Core primitives, 64-bit NaN-boxed values, opcodes, and bytecode chunks
+│   ├── ely_compiler     # Zero-allocation lexer, Pratt parser, and single-pass bytecode emitter
+│   ├── ely_vm           # Stack-based runtime VM, object heap, and hot-path JIT tier-up
+│   └── ely_jit          # Cranelift SSA translation, CFG construction, and native JIT execution
 ├── tools/
-│   └── ely_cli          # Interactive REPL and command-line file execution driver
-└── examples/            # Language fixtures, benchmarks, and example programs
+│   ├── ely_cli          # Modular CLI driver, interactive REPL, and code generation flags
+│   └── benchmark.py     # Automated performance instrumentation comparing VM vs JIT
+├── examples/            # Benchmark scripts, language fixtures, and tests
+└── docs/                # Architecture guides, JIT internals, and opcode specifications
 ```
 
 ---
 
-## Prerequisites
+## Documentation Directory
+
+Comprehensive design specifications and architectural documentation are available in [`docs/`](docs/):
+
+| Document | Description |
+| :--- | :--- |
+| [System Architecture](docs/architecture.md) | End-to-end design, compilation pipeline, workspace layout, and multi-tier execution model. |
+| [Cranelift JIT Specification](docs/jit_compiler.md) | JIT engine internals, SSA lowering, CFG blocks, runtime trampolines, `--dump-ir`, and `--dump-asm`. |
+| [CLI & Tooling Guide](docs/cli_tooling.md) | Command-line driver, interactive REPL options, and performance benchmarking instructions. |
+| [Bytecode & Opcode Reference](docs/opcodes_specification.md) | Complete instruction set architecture (ISA), stack transition rules, and closure capture semantics. |
+| [NaN-Boxing Value Specification](docs/nan_boxing_specification.md) | IEEE-754 64-bit layout, bitmasks, payload packing, and type guards. |
+
+---
+
+## Prerequisites & Installation
 
 - **Rust toolchain:** Rust 1.75+ (or latest stable) with Cargo.
 - **Platform support:** Linux, macOS, and Windows (x86_64, AArch64).
-
-To verify your Rust environment:
 
 ```shell
 cargo --version
@@ -49,51 +64,89 @@ rustc --version
 
 ---
 
-## Documentation
+## Quickstart & CLI Usage
 
-Project specifications and design documentation are located in the [`docs/`](docs/) directory:
-
-- [Bytecode & Opcode Specification](docs/opcodes_specification.md): Detailed instruction set reference, operand encoding, stack transition schemas, and closure capture mechanics.
-- [NaN-Boxing Value Specification](docs/nan_boxing_specification.md): Complete IEEE-754 64-bit layout, bitmasks, pointer packing, type guards, and canonicalization.
-
----
-
-## Building & Testing
-
-### Build the entire workspace
+### Build the Workspace
 
 ```shell
 cargo build --workspace
 ```
 
-### Run tests
+### Run Unit Tests
 
 ```shell
 cargo test --workspace
 ```
 
-### Launch the REPL
+### Launch Interactive REPL
 
 ```shell
+# Standard bytecode VM REPL
 cargo run -p ely_cli
+
+# Pure native Cranelift JIT REPL
+cargo run -p ely_cli -- --jit
 ```
 
-### Execute a script
+### Execute a Script
 
 ```shell
-cargo run -p ely_cli -- path/to/script.ely
+# Run via VM (with automatic dynamic hot-path tier-up)
+cargo run -p ely_cli -- examples/bench_loop.ely
+
+# Force pure Cranelift JIT execution
+cargo run -p ely_cli -- --jit examples/bench_loop.ely
+
+# Force pure bytecode VM execution (disables dynamic JIT)
+cargo run -p ely_cli -- --no-jit examples/bench_loop.ely
+```
+
+### Inspect Intermediate Representation & Assembly
+
+```shell
+# Dump Cranelift SSA IR
+cargo run -p ely_cli -- --jit --dump-ir examples/bench_loop.ely
+
+# Dump native machine code disassembly (VCode)
+cargo run -p ely_cli -- --jit --dump-asm examples/bench_loop.ely
+```
+
+---
+
+## Performance Benchmarking
+
+To measure and compare the execution performance of the Bytecode VM versus the Native Cranelift JIT:
+
+```shell
+python3 tools/benchmark.py
+```
+
+### Benchmark Results (2,000,000 Iterations Loop)
+
+```text
+-------------------------------------------------------
+Execution Mode            | Average Time (s) | Result
+-------------------------------------------------------
+VM Interpreter (--no-jit) | 0.5852          | 2000001000000
+Native JIT (--jit)        | 0.2327          | 2000001000000
+-------------------------------------------------------
+
+🚀 Cranelift JIT is 2.51x faster than the VM interpreter!
 ```
 
 ---
 
 ## Roadmap
 
-1. [x] Multi-crate workspace scaffold and core configuration.
-2. [ ] Zero-allocation Tokenizer / Lexer with accurate source span tracking.
-3. [ ] Single-pass Pratt Parser and Bytecode Emitter (`ely_compiler`).
-4. [ ] Stack-based Virtual Machine and Object Runtime (`ely_vm`).
-5. [ ] Cranelift JIT compilation tier for hot methods and arithmetic loops (`ely_jit`).
-6. [ ] Enhanced standard library (`math`, `stdio`, dynamic arrays).
+- [x] Multi-crate workspace scaffold and core configuration (`ely_core`).
+- [x] Zero-allocation Tokenizer / Lexer with source span tracking (`ely_compiler`).
+- [x] Single-pass Pratt Parser and Bytecode Emitter (`ely_compiler`).
+- [x] Stack-based Virtual Machine and Object Heap Runtime (`ely_vm`).
+- [x] Cranelift JIT compilation tier for native machine execution (`ely_jit`).
+- [x] Dynamic hot-path invocation tier-up from VM to JIT (`ely_vm` + `ely_jit`).
+- [x] Modular CLI with REPL, inspection flags (`--dump-ir`, `--dump-asm`), and Python benchmark suite.
+- [ ] Garbage Collection tracing (Mark & Sweep / Arena GC).
+- [ ] Enhanced standard library modules (`math`, `io`, `os`).
 
 ---
 
