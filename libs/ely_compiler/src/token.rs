@@ -19,6 +19,13 @@ pub enum TokenType {
     BwNot,
     BwXor,
 
+    PlusPlus,
+    MinusMinus,
+    PlusAssign,
+    MinusAssign,
+    MultiplyAssign,
+    DivideAssign,
+
     Negate,
     NonEquality,
     Assign,

@@ -37,6 +37,40 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    pub(crate) fn prefix_inc_dec(&mut self) {
+        let is_inc = self.parser.previous.token_type == TokenType::PlusPlus;
+        self.parser.consume(
+            TokenType::Identifier,
+            "Expected variable name after '++' or '--'.",
+        );
+        let name = self.parser.previous;
+
+        let (get_op, set_op, arg) = if let Some(slot) = self.resolve_local(name) {
+            (Opcode::GetLocal, Opcode::SetLocal, slot)
+        } else {
+            (
+                Opcode::GetGlobal,
+                Opcode::SetGlobal,
+                self.identifier_constant(name),
+            )
+        };
+
+        self.emit_opcode(get_op);
+        self.emit_byte(arg);
+
+        // Emit increment or decrement numeric constant
+        self.emit_constant(Value::number(1.0));
+
+        if is_inc {
+            self.emit_opcode(Opcode::Add);
+        } else {
+            self.emit_opcode(Opcode::Subtract);
+        }
+
+        self.emit_opcode(set_op);
+        self.emit_byte(arg);
+    }
+
     /// Parses an infix binary expression and emits the corresponding opcode.
     pub(crate) fn binary(&mut self) {
         let operator_type = self.parser.previous.token_type;
@@ -93,25 +127,50 @@ impl<'a> Compiler<'a> {
 
     /// Emits bytecode to resolve or assign a named identifier.
     pub(crate) fn named_variable(&mut self, name: Token<'a>, can_assign: bool) {
-        let arg = self.identifier_constant(name);
+        let (get_op, set_op, arg) = if let Some(slot) = self.resolve_local(name) {
+            (Opcode::GetLocal, Opcode::SetLocal, slot)
+        } else {
+            (
+                Opcode::GetGlobal,
+                Opcode::SetGlobal,
+                self.identifier_constant(name),
+            )
+        };
 
         if can_assign && self.parser.match_token(TokenType::Assign) {
             self.expression();
-            if let Some(slot) = self.resolve_local(name) {
-                self.emit_opcode(Opcode::SetLocal);
-                self.emit_byte(slot);
-            } else {
-                self.emit_opcode(Opcode::SetGlobal);
-                self.emit_byte(arg);
+            self.emit_opcode(set_op);
+            self.emit_byte(arg);
+        } else if can_assign
+            && (self.parser.match_token(TokenType::PlusAssign)
+                || self.parser.match_token(TokenType::MinusAssign)
+                || self.parser.match_token(TokenType::MultiplyAssign)
+                || self.parser.match_token(TokenType::DivideAssign))
+        {
+            // Save the operator
+            let op = self.parser.previous.token_type;
+
+            // Read value
+            self.emit_opcode(get_op);
+            self.emit_byte(arg);
+
+            self.expression();
+
+            // Emit opcode based on operator type
+            match op {
+                TokenType::PlusAssign => self.emit_opcode(Opcode::Add),
+                TokenType::MinusAssign => self.emit_opcode(Opcode::Subtract),
+                TokenType::MultiplyAssign => self.emit_opcode(Opcode::Multiply),
+                TokenType::DivideAssign => self.emit_opcode(Opcode::Divide),
+                _ => (),
             }
+
+            // Store result
+            self.emit_opcode(set_op);
+            self.emit_byte(arg);
         } else {
-            if let Some(slot) = self.resolve_local(name) {
-                self.emit_opcode(Opcode::GetLocal);
-                self.emit_byte(slot);
-            } else {
-                self.emit_opcode(Opcode::GetGlobal);
-                self.emit_byte(arg);
-            }
+            self.emit_opcode(get_op);
+            self.emit_byte(arg);
         }
     }
 
@@ -178,6 +237,7 @@ impl<'a> Compiler<'a> {
         match self.parser.previous.token_type {
             TokenType::OpenParen => self.grouping(),
             TokenType::Minus | TokenType::Negate | TokenType::BwNot => self.unary(),
+            TokenType::PlusPlus | TokenType::MinusMinus => self.prefix_inc_dec(),
             TokenType::Number => self.number(),
             TokenType::String => self.string(),
             TokenType::False | TokenType::True | TokenType::Null => self.literal(),
@@ -198,7 +258,13 @@ impl<'a> Compiler<'a> {
             }
         }
 
-        if can_assign && self.parser.match_token(TokenType::Assign) {
+        if can_assign
+            && (self.parser.match_token(TokenType::Assign)
+                || self.parser.match_token(TokenType::PlusAssign)
+                || self.parser.match_token(TokenType::MinusAssign)
+                || self.parser.match_token(TokenType::MultiplyAssign)
+                || self.parser.match_token(TokenType::DivideAssign))
+        {
             self.parser.error("Invalid assignment target.");
         }
     }

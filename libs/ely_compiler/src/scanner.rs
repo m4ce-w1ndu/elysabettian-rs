@@ -132,10 +132,42 @@ impl<'a> Scanner<'a> {
             ';' => self.make_token(TokenType::Semicolon),
             ',' => self.make_token(TokenType::Comma),
             '.' => self.make_token(TokenType::Dot),
-            '-' => self.make_token(TokenType::Minus),
-            '+' => self.make_token(TokenType::Plus),
-            '/' => self.make_token(TokenType::Divide),
-            '*' => self.make_token(TokenType::Multiply),
+            '-' => {
+                let token_type = if self.match_char('-') {
+                    TokenType::MinusMinus
+                } else if self.match_char('=') {
+                    TokenType::MinusAssign
+                } else {
+                    TokenType::Minus
+                };
+                self.make_token(token_type)
+            }
+            '+' => {
+                let token_type = if self.match_char('+') {
+                    TokenType::PlusPlus
+                } else if self.match_char('=') {
+                    TokenType::PlusAssign
+                } else {
+                    TokenType::Plus
+                };
+                self.make_token(token_type)
+            }
+            '/' => {
+                let token_type = if self.match_char('=') {
+                    TokenType::DivideAssign
+                } else {
+                    TokenType::Divide
+                };
+                self.make_token(token_type)
+            }
+            '*' => {
+                let token_type = if self.match_char('=') {
+                    TokenType::MultiplyAssign
+                } else {
+                    TokenType::Multiply
+                };
+                self.make_token(token_type)
+            }
             '~' => self.make_token(TokenType::BwNot),
             '^' => self.make_token(TokenType::BwXor),
             '!' => {

@@ -240,3 +240,25 @@ use ely_core::value::Value;
             panic!("Expected function object");
         }
     }
+
+    #[test]
+    fn test_vm_interpret_prefix_inc_dec_and_compound_assignments() {
+        let mut interner = ely_core::interner::StringInterner::new();
+        let source = "
+            func compute() {
+                var x = 10;
+                ++x;       // 11
+                x += 5;    // 16
+                --x;       // 15
+                x -= 3;    // 12
+                x *= 2;    // 24
+                x /= 4;    // 6
+                return x;
+            }
+            compute();
+        ";
+        let chunk = ely_compiler::compiler::compile(source, &mut interner).expect("Compilation failed");
+        let mut vm = VM::new();
+        let result = vm.interpret(&chunk);
+        assert_eq!(result, InterpretResult::Ok);
+    }

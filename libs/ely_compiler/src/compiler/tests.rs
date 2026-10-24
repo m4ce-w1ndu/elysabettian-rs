@@ -316,3 +316,160 @@ use ely_core::opcode::Opcode;
             ]
         );
     }
+
+    #[test]
+    fn test_compile_prefix_increment_decrement() {
+        // Global variables
+        let source_global = "
+            var x = 10;
+            ++x;
+            --x;
+        ";
+        let mut interner = StringInterner::new();
+        let chunk = compile(source_global, &mut interner).expect("Compilation failed");
+        let ops = extract_opcodes(&chunk);
+
+        assert_eq!(
+            ops,
+            vec![
+                Opcode::Constant,
+                Opcode::DefineGlobal,
+                // ++x
+                Opcode::GetGlobal,
+                Opcode::Constant,
+                Opcode::Add,
+                Opcode::SetGlobal,
+                Opcode::Pop,
+                // --x
+                Opcode::GetGlobal,
+                Opcode::Constant,
+                Opcode::Subtract,
+                Opcode::SetGlobal,
+                Opcode::Pop,
+                Opcode::Nop,
+                Opcode::Return,
+            ]
+        );
+
+        // Local variables
+        let source_local = "
+            {
+                var y = 20;
+                ++y;
+                --y;
+            }
+        ";
+        let mut interner = StringInterner::new();
+        let chunk = compile(source_local, &mut interner).expect("Compilation failed");
+        let ops = extract_opcodes(&chunk);
+
+        assert_eq!(
+            ops,
+            vec![
+                Opcode::Constant,
+                // ++y
+                Opcode::GetLocal,
+                Opcode::Constant,
+                Opcode::Add,
+                Opcode::SetLocal,
+                Opcode::Pop,
+                // --y
+                Opcode::GetLocal,
+                Opcode::Constant,
+                Opcode::Subtract,
+                Opcode::SetLocal,
+                Opcode::Pop,
+                // End scope pops y
+                Opcode::Pop,
+                Opcode::Nop,
+                Opcode::Return,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_compile_compound_assignments() {
+        // Global compound assignments
+        let source_global = "
+            var a = 10;
+            a += 5;
+            a -= 2;
+            a *= 3;
+            a /= 4;
+        ";
+        let mut interner = StringInterner::new();
+        let chunk = compile(source_global, &mut interner).expect("Compilation failed");
+        let ops = extract_opcodes(&chunk);
+
+        assert_eq!(
+            ops,
+            vec![
+                Opcode::Constant,
+                Opcode::DefineGlobal,
+                // a += 5
+                Opcode::GetGlobal,
+                Opcode::Constant,
+                Opcode::Add,
+                Opcode::SetGlobal,
+                Opcode::Pop,
+                // a -= 2
+                Opcode::GetGlobal,
+                Opcode::Constant,
+                Opcode::Subtract,
+                Opcode::SetGlobal,
+                Opcode::Pop,
+                // a *= 3
+                Opcode::GetGlobal,
+                Opcode::Constant,
+                Opcode::Multiply,
+                Opcode::SetGlobal,
+                Opcode::Pop,
+                // a /= 4
+                Opcode::GetGlobal,
+                Opcode::Constant,
+                Opcode::Divide,
+                Opcode::SetGlobal,
+                Opcode::Pop,
+                Opcode::Nop,
+                Opcode::Return,
+            ]
+        );
+
+        // Local compound assignments
+        let source_local = "
+            {
+                var b = 10;
+                b += 5;
+            }
+        ";
+        let mut interner = StringInterner::new();
+        let chunk = compile(source_local, &mut interner).expect("Compilation failed");
+        let ops = extract_opcodes(&chunk);
+
+        assert_eq!(
+            ops,
+            vec![
+                Opcode::Constant,
+                Opcode::GetLocal,
+                Opcode::Constant,
+                Opcode::Add,
+                Opcode::SetLocal,
+                Opcode::Pop,
+                Opcode::Pop,
+                Opcode::Nop,
+                Opcode::Return,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_compile_invalid_assignment_targets() {
+        let mut interner = StringInterner::new();
+        assert!(compile("1 + 2 = 3;", &mut interner).is_none());
+        assert!(compile("1 + 2 += 3;", &mut interner).is_none());
+        assert!(compile("1 + 2 -= 3;", &mut interner).is_none());
+        assert!(compile("1 + 2 *= 3;", &mut interner).is_none());
+        assert!(compile("1 + 2 /= 3;", &mut interner).is_none());
+        assert!(compile("++5;", &mut interner).is_none());
+        assert!(compile("--5;", &mut interner).is_none());
+    }
