@@ -78,6 +78,36 @@ impl<'a> JitCompiler<'a> {
             .declare_function("ely_jit_print_value", Linkage::Import, &print_val_sig)
             .map_err(|e| e.to_string())?;
 
+        let mut call_0_sig = self.engine.module.make_signature();
+        call_0_sig.params.push(AbiParam::new(types::I64)); // callee_bits
+        call_0_sig.returns.push(AbiParam::new(types::F64));
+        let call_0_id = self
+            .engine
+            .module
+            .declare_function("ely_jit_call_0", Linkage::Import, &call_0_sig)
+            .map_err(|e| e.to_string())?;
+
+        let mut call_1_sig = self.engine.module.make_signature();
+        call_1_sig.params.push(AbiParam::new(types::I64)); // callee_bits
+        call_1_sig.params.push(AbiParam::new(types::F64)); // arg0
+        call_1_sig.returns.push(AbiParam::new(types::F64));
+        let call_1_id = self
+            .engine
+            .module
+            .declare_function("ely_jit_call_1", Linkage::Import, &call_1_sig)
+            .map_err(|e| e.to_string())?;
+
+        let mut call_2_sig = self.engine.module.make_signature();
+        call_2_sig.params.push(AbiParam::new(types::I64)); // callee_bits
+        call_2_sig.params.push(AbiParam::new(types::F64)); // arg0
+        call_2_sig.params.push(AbiParam::new(types::F64)); // arg1
+        call_2_sig.returns.push(AbiParam::new(types::F64));
+        let call_2_id = self
+            .engine
+            .module
+            .declare_function("ely_jit_call_2", Linkage::Import, &call_2_sig)
+            .map_err(|e| e.to_string())?;
+
         // Set signature in codegen context
         self.engine.ctx.func.signature = sig;
 
@@ -100,6 +130,18 @@ impl<'a> JitCompiler<'a> {
                 .engine
                 .module
                 .declare_func_in_func(print_val_id, &mut builder.func);
+            let call_0_func = self
+                .engine
+                .module
+                .declare_func_in_func(call_0_id, &mut builder.func);
+            let call_1_func = self
+                .engine
+                .module
+                .declare_func_in_func(call_1_id, &mut builder.func);
+            let call_2_func = self
+                .engine
+                .module
+                .declare_func_in_func(call_2_id, &mut builder.func);
 
             // Pre-pass: scan chunk to find branch targets and maximum local slot
             let mut branch_targets = BTreeSet::new();
@@ -288,6 +330,36 @@ impl<'a> JitCompiler<'a> {
                         let bits = builder.ins().bitcast(types::I64, MemFlags::new(), val);
                         let id_val = builder.ins().iconst(types::I32, name_id as i64);
                         builder.ins().call(set_global_func, &[id_val, bits]);
+                    }
+                    Opcode::Call => {
+                        let arg_count = chunk.code[ip] as usize;
+                        ip += 1;
+
+                        let mut args = Vec::with_capacity(arg_count);
+                        for _ in 0..arg_count {
+                            args.push(eval_stack.pop().ok_or("Stack underflow in Call arguments")?);
+                        }
+                        args.reverse();
+
+                        let callee = eval_stack.pop().ok_or("Stack underflow in Call callee")?;
+                        let callee_i64 = builder.ins().bitcast(types::I64, MemFlags::new(), callee);
+
+                        let res = match arg_count {
+                            0 => {
+                                let inst = builder.ins().call(call_0_func, &[callee_i64]);
+                                builder.inst_results(inst)[0]
+                            }
+                            1 => {
+                                let inst = builder.ins().call(call_1_func, &[callee_i64, args[0]]);
+                                builder.inst_results(inst)[0]
+                            }
+                            2 => {
+                                let inst = builder.ins().call(call_2_func, &[callee_i64, args[0], args[1]]);
+                                builder.inst_results(inst)[0]
+                            }
+                            _ => return Err(format!("JIT does not yet support calls with {} arguments", arg_count)),
+                        };
+                        eval_stack.push(res);
                     }
                     Opcode::Print => {
                         let val = eval_stack.pop().ok_or("Stack underflow in Opcode::Print")?;

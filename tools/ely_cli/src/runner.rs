@@ -23,7 +23,10 @@ pub fn run_source(
     };
 
     if jit_only {
-        match run_jit(&chunk, dump_ir, dump_asm) {
+        let engine = vm
+            .jit_engine
+            .get_or_insert_with(|| ely_jit::engine::JitEngine::new().expect("Failed to initialize JIT engine"));
+        match run_jit(&chunk, engine, dump_ir, dump_asm) {
             Ok(_) => InterpretResult::Ok,
             Err(err) => {
                 eprintln!("JIT Execution Error: {}", err);
