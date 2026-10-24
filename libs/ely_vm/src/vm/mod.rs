@@ -116,6 +116,11 @@ impl VM {
         self.natives.insert(name_id, function);
     }
 
+    /// Registers all standard library functions and constants.
+    pub fn register_stdlib(&mut self, interner: &mut ely_core::interner::StringInterner) {
+        ely_stdlib::register_all(&mut self.natives, &mut self.globals, interner);
+    }
+
     /// Allocates an object on the heap and returns a NaN-boxed Value reference.
     pub fn allocate_object(&mut self, object: HeapObject) -> Value {
         let id = self.heap.len();

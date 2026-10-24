@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "libs/ely_core",
     "libs/ely_compiler",
+    "libs/ely_stdlib",
     "libs/ely_vm",
     "libs/ely_jit",
     "tools/ely_cli",
@@ -17,6 +18,7 @@ license = "MIT"
 [workspace.dependencies]
 ely_core = { path = "libs/ely_core" }
 ely_compiler = { path = "libs/ely_compiler" }
+ely_stdlib = { path = "libs/ely_stdlib" }
 ely_vm = { path = "libs/ely_vm" }
 ely_jit = { path = "libs/ely_jit" }
 

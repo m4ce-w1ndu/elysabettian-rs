@@ -17,6 +17,7 @@ fn main() {
     let cli = Cli::parse();
     let mut vm = VM::new();
     let mut interner = StringInterner::new();
+    vm.register_stdlib(&mut interner);
 
     if cli.no_jit {
         vm.jit_engine = None;
