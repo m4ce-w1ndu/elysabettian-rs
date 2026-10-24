@@ -1,0 +1,271 @@
+use crate::compiler::{Compiler, FunctionType};
+use crate::token::TokenType;
+use ely_core::opcode::Opcode;
+
+impl<'a> Compiler<'a> {
+    /// Dispatches and compiles a single statement.
+    pub(crate) fn statement(&mut self) {
+        if self.parser.match_token(TokenType::Print) {
+            self.print_statement();
+        } else if self.parser.match_token(TokenType::If) {
+            self.if_statement();
+        } else if self.parser.match_token(TokenType::While) {
+            self.while_statement();
+        } else if self.parser.match_token(TokenType::For) {
+            self.for_statement();
+        } else if self.parser.match_token(TokenType::Return) {
+            self.return_statement();
+        } else if self.parser.match_token(TokenType::OpenCurly) {
+            self.begin_scope();
+            self.block();
+            self.end_scope();
+        } else {
+            self.expression_statement();
+        }
+    }
+
+    /// Compiles a `print <expr>;` statement.
+    pub(crate) fn print_statement(&mut self) {
+        self.expression();
+        self.parser
+            .consume(TokenType::Semicolon, "Expected ';' after value.");
+        self.emit_opcode(Opcode::Print);
+    }
+
+    /// Compiles an expression evaluated for side effects (`<expr>;`), discarding its result with Pop.
+    pub(crate) fn expression_statement(&mut self) {
+        self.expression();
+        self.parser
+            .consume(TokenType::Semicolon, "Expected ';' after expression.");
+        self.emit_opcode(Opcode::Pop);
+    }
+
+    /// Dispatches top-level declarations (variable bindings, functions, or fallthrough statements).
+    pub(crate) fn declaration(&mut self) {
+        if self.parser.match_token(TokenType::Var) {
+            self.var_declaration();
+        } else if self.parser.match_token(TokenType::Func) {
+            self.func_declaration();
+        } else {
+            self.statement();
+        }
+
+        if self.parser.panic_mode {
+            self.synchronize();
+        }
+    }
+
+    /// Parses a variable declaration statement (`var <name> [= <expr>];`).
+    pub(crate) fn var_declaration(&mut self) {
+        let global = self.parse_variable("Expected variable name.");
+
+        if self.parser.match_token(TokenType::Assign) {
+            self.expression();
+        } else {
+            self.emit_opcode(Opcode::Nop);
+        }
+
+        self.parser.consume(
+            TokenType::Semicolon,
+            "Expected ';' after variable declaration.",
+        );
+
+        self.define_variable(global);
+    }
+
+    /// Recovers the parser state to the next statement boundary after a syntax error.
+    pub(crate) fn synchronize(&mut self) {
+        self.parser.panic_mode = false;
+
+        while self.parser.current.token_type != TokenType::Eof {
+            if self.parser.previous.token_type == TokenType::Semicolon {
+                return;
+            }
+
+            match self.parser.current.token_type {
+                TokenType::Class
+                | TokenType::Func
+                | TokenType::Var
+                | TokenType::For
+                | TokenType::If
+                | TokenType::While
+                | TokenType::Print
+                | TokenType::Return => return,
+                _ => (),
+            }
+
+            self.parser.advance();
+        }
+    }
+
+    /// Parses a sequence of declarations enclosed in `{ ... }`.
+    pub(crate) fn block(&mut self) {
+        while self.parser.current.token_type != TokenType::CloseCurly
+            && self.parser.current.token_type != TokenType::Eof
+        {
+            self.declaration();
+        }
+
+        self.parser
+            .consume(TokenType::CloseCurly, "Expected '}' after block.");
+    }
+
+    /// Compiles an `if (<cond>) <then> [else <else>]` statement.
+    pub(crate) fn if_statement(&mut self) {
+        self.parser
+            .consume(TokenType::OpenParen, "Expected '(' after 'if'.");
+        self.expression();
+        self.parser
+            .consume(TokenType::CloseParen, "Expected ')' after condition.");
+
+        let then_jump = self.emit_jump(Opcode::JumpIfFalse);
+        self.emit_opcode(Opcode::Pop);
+        self.statement();
+
+        let else_jump = self.emit_jump(Opcode::Jump);
+
+        self.patch_jump(then_jump);
+        self.emit_opcode(Opcode::Pop);
+
+        if self.parser.match_token(TokenType::Else) {
+            self.statement();
+        }
+
+        self.patch_jump(else_jump);
+    }
+
+    /// Compiles a `while (<cond>) <body>` loop.
+    pub(crate) fn while_statement(&mut self) {
+        let loop_start = self.chunk.count();
+
+        self.parser
+            .consume(TokenType::OpenParen, "Expected '(' after 'while'.");
+        self.expression();
+        self.parser
+            .consume(TokenType::CloseParen, "Expected ')' after condition.");
+
+        let exit_jump = self.emit_jump(Opcode::JumpIfFalse);
+        self.emit_opcode(Opcode::Pop);
+
+        self.statement();
+        self.emit_loop(loop_start);
+
+        self.patch_jump(exit_jump);
+        self.emit_opcode(Opcode::Pop);
+    }
+
+    /// Compiles a `for ([init]; [cond]; [incr]) <body>` loop.
+    pub(crate) fn for_statement(&mut self) {
+        self.begin_scope();
+        self.parser
+            .consume(TokenType::OpenParen, "Expected '(' after 'for'.");
+
+        if self.parser.match_token(TokenType::Semicolon) {
+            ()
+        } else if self.parser.match_token(TokenType::Var) {
+            self.var_declaration();
+        } else {
+            self.expression_statement();
+        }
+
+        let mut loop_start = self.chunk.count();
+        let mut exit_jump: Option<usize> = None;
+        if !self.parser.match_token(TokenType::Semicolon) {
+            self.expression();
+            self.parser
+                .consume(TokenType::Semicolon, "Expected ';' after loop condition.");
+            exit_jump = Some(self.emit_jump(Opcode::JumpIfFalse));
+            self.emit_opcode(Opcode::Pop);
+        }
+
+        if !self.parser.match_token(TokenType::CloseParen) {
+            let body_jump = self.emit_jump(Opcode::Jump);
+            let increment_start = self.chunk.count();
+            self.expression();
+            self.emit_opcode(Opcode::Pop);
+
+            self.parser
+                .consume(TokenType::CloseParen, "Expected ')' after 'for' clauses.");
+            self.emit_loop(loop_start);
+            loop_start = increment_start;
+            self.patch_jump(body_jump);
+        }
+
+        self.statement();
+        self.emit_loop(loop_start);
+
+        if let Some(exit_jump) = exit_jump {
+            self.patch_jump(exit_jump);
+            self.emit_opcode(Opcode::Pop);
+        }
+
+        self.end_scope();
+    }
+
+    /// Compiles a function body, returning the number of compiled parameters.
+    pub(crate) fn function(&mut self) -> usize {
+        self.begin_scope();
+        self.parser
+            .consume(TokenType::OpenParen, "Expected '(' after function name.");
+
+        let mut arity: usize = 0;
+        if !self.parser.check(TokenType::CloseParen) {
+            loop {
+                arity += 1;
+                if arity > 255 {
+                    self.parser.error("Cannot have more than 255 parameters.");
+                    return arity;
+                }
+
+                let constant = self.parse_variable("Expected parameter name.");
+                self.define_variable(constant);
+
+                if !self.parser.match_token(TokenType::Comma) {
+                    break;
+                }
+            }
+        }
+
+        self.parser.consume(
+            TokenType::CloseParen,
+            "Expected ')' after function parameters.",
+        );
+        self.parser.consume(
+            TokenType::OpenCurly,
+            "Expected '{' after function signature.",
+        );
+
+        self.block();
+        self.emit_return();
+
+        arity
+    }
+
+    /// Compiles a function declaration, parsing signature and body.
+    pub(crate) fn func_declaration(&mut self) {
+        let global = self.parse_variable("Expected function name for signature.");
+        if self.scope_depth > 0 {
+            self.mark_initialized();
+        }
+
+        _ = self.function();
+
+        self.define_variable(global);
+    }
+
+    /// Compiles a `return [expr];` statement.
+    pub(crate) fn return_statement(&mut self) {
+        if self.function_type == FunctionType::Script {
+            self.parser.error("Cannot return from top-level code.");
+        }
+
+        if self.parser.match_token(TokenType::Semicolon) {
+            self.emit_return();
+        } else {
+            self.expression();
+            self.parser
+                .consume(TokenType::Semicolon, "Expected ';' after return value.");
+            self.emit_opcode(Opcode::Return);
+        }
+    }
+}
