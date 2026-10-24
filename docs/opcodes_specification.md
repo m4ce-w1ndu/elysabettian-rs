@@ -63,6 +63,7 @@ Each opcode is an 8-bit unsigned integer (`u8`) executed by the stack-based inte
 | `0x2B` | 43 | `ArrayBuild` | `[count: u8]` | `[..., item1..N] -> [..., array_obj]` | Creates an array containing the top `count` values. |
 | `0x2C` | 44 | `ArrayIndex` | None | `[..., array, index] -> [..., element]` | Subscript index read (`array[index]`). |
 | `0x2D` | 45 | `ArrayStore` | None | `[..., array, index, val] -> [..., val]` | Subscript index write (`array[index] = val`). |
+| `0x2E` | 46 | `Import` | `[const_idx: u8]` | `[] -> []` | Dynamically loads and binds a module (built-in or foreign `.so`) into VM globals. |
 
 ---
 

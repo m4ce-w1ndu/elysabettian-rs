@@ -46,6 +46,8 @@ impl<'a> Compiler<'a> {
             self.var_declaration();
         } else if self.parser.match_token(TokenType::Func) {
             self.func_declaration();
+        } else if self.parser.match_token(TokenType::Import) {
+            self.import_statement();
         } else {
             self.statement();
         }
@@ -53,6 +55,32 @@ impl<'a> Compiler<'a> {
         if self.parser.panic_mode {
             self.synchronize();
         }
+    }
+
+    /// Compiles an `import("<module>");` or `import "<module>";` statement.
+    pub(crate) fn import_statement(&mut self) {
+        let has_paren = self.parser.match_token(TokenType::OpenParen);
+        self.parser
+            .consume(TokenType::String, "Expected module name string after 'import'.");
+
+        let lexeme = self.parser.previous.lexeme;
+        let module_name = if lexeme.len() >= 2 {
+            &lexeme[1..lexeme.len() - 1]
+        } else {
+            ""
+        };
+
+        let string_idx = self.chunk.add_string_constant(module_name.to_string());
+
+        if has_paren {
+            self.parser
+                .consume(TokenType::CloseParen, "Expected ')' after module name.");
+        }
+        self.parser
+            .consume(TokenType::Semicolon, "Expected ';' after import statement.");
+
+        self.emit_opcode(Opcode::Import);
+        self.emit_byte(string_idx as u8);
     }
 
     /// Parses a variable declaration statement (`var <name> [= <expr>];`).

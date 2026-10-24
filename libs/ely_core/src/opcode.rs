@@ -73,6 +73,9 @@ pub enum Opcode {
     ArrayBuild,
     ArrayIndex,
     ArrayStore,
+
+    // Import external modules
+    Import,
 }
 
 /// Implements safe conversion of the Opcode enum straight from u8
@@ -81,7 +84,7 @@ impl TryFrom<u8> for Opcode {
 
     #[inline]
     fn try_from(byte: u8) -> Result<Self, Self::Error> {
-        if byte <= Opcode::ArrayStore as u8 {
+        if byte <= Opcode::Import as u8 {
             Ok(unsafe { std::mem::transmute(byte) })
         } else {
             Err(byte)

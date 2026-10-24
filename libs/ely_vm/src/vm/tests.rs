@@ -281,3 +281,26 @@ use ely_core::value::Value;
         let result = vm.interpret(&chunk);
         assert_eq!(result, InterpretResult::Ok);
     }
+
+    #[test]
+    fn test_vm_interpret_import_statement() {
+        let mut vm = VM::new();
+        let source = "
+            import('math');
+            import(\"io\");
+            var a = sqrt(144);
+            var b = pow(2, 5);
+            var t = clock();
+        ";
+        let chunk = ely_compiler::compiler::compile(source, &mut vm.interner).expect("Compilation failed");
+        let result = vm.interpret(&chunk);
+        assert_eq!(result, InterpretResult::Ok);
+
+        let a_id = vm.interner.intern("a");
+        let b_id = vm.interner.intern("b");
+        let t_id = vm.interner.intern("t");
+
+        assert_eq!(vm.globals.get(&a_id).unwrap().as_number(), 12.0);
+        assert_eq!(vm.globals.get(&b_id).unwrap().as_number(), 32.0);
+        assert!(vm.globals.get(&t_id).unwrap().as_number() > 0.0);
+    }

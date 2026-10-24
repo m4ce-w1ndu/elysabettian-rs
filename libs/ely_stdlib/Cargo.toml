@@ -5,3 +5,4 @@ edition = "2021"
 
 [dependencies]
 ely_core.workspace = true
+libloading = "0.9.0"

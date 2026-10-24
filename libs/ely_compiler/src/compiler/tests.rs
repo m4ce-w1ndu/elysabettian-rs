@@ -17,7 +17,8 @@ use ely_core::opcode::Opcode;
                     | Opcode::DefineGlobal
                     | Opcode::SetGlobal
                     | Opcode::Call
-                    | Opcode::Closure => {
+                    | Opcode::Closure
+                    | Opcode::Import => {
                         i += 2;
                     }
                     Opcode::Jump | Opcode::JumpIfFalse | Opcode::Loop => {
@@ -580,4 +581,29 @@ use ely_core::opcode::Opcode;
                 Opcode::Return,
             ]
         );
+    }
+
+    #[test]
+    fn test_compile_import_statement() {
+        let source = "
+            import('math');
+            import(\"stdio\");
+        ";
+        let mut interner = StringInterner::new();
+        let chunk = compile(source, &mut interner).expect("Compilation failed");
+        let ops = extract_opcodes(&chunk);
+
+        assert_eq!(
+            ops,
+            vec![
+                Opcode::Import,
+                Opcode::Import,
+                Opcode::Nop,
+                Opcode::Return,
+            ]
+        );
+
+        assert_eq!(chunk.string_constants.len(), 2);
+        assert_eq!(chunk.string_constants[0], "math");
+        assert_eq!(chunk.string_constants[1], "stdio");
     }

@@ -14,7 +14,9 @@ graph TD
     CLI --> JIT["libs/ely_jit<br/>(Cranelift JIT Engine)"]
     CLI --> COMP["libs/ely_compiler<br/>(Lexer & Pratt Parser)"]
     VM --> CORE["libs/ely_core<br/>(Bytecode, Values, Chunk)"]
+    VM --> STDLIB["libs/ely_stdlib<br/>(Builtins & C-ABI Loader)"]
     VM --> JIT
+    STDLIB --> CORE
     JIT --> CORE
     COMP --> CORE
 ```
@@ -27,19 +29,23 @@ graph TD
    - **`Chunk`**: Executable bytecode buffer holding bytecode stream, constant pool (numbers, booleans, string descriptors), string constants table, and line debug info.
 
 2. **`libs/ely_compiler`**: Front-end compiler.
-   - **`Lexer` / `Scanner`**: Zero-allocation token stream generator with source line tracking.
-   - **`Parser`**: Single-pass Pratt parser emitting optimized bytecode instructions directly into `Chunk`. Handles expressions, statement blocks, variable bindings, control structures (`if`, `while`, `for`), functions, and classes.
+   - **`Lexer` / `Scanner`**: Zero-allocation token stream generator with source line tracking. Supports both single and double quotes.
+   - **`Parser`**: Single-pass Pratt parser emitting optimized bytecode instructions directly into `Chunk`. Handles expressions, statement blocks, variable bindings, control structures (`if`, `while`, `for`), functions, classes, and `import` declarations.
 
-3. **`libs/ely_vm`**: Stack-based bytecode interpreter and managed heap.
+3. **`libs/ely_stdlib`**: Standard library and dynamic foreign function interface (FFI).
+   - **Built-in Modules**: Core `math` (trigonometry, logarithms, powers, roots, constants) and `io` (`clock`, `read`, `sleep`, `flush`).
+   - **C-ABI Foreign Module Loader**: Dynamic plugin loader for external `.so` / `.dylib` shared libraries via `ElyApi`.
+
+4. **`libs/ely_vm`**: Stack-based bytecode interpreter and managed heap.
    - **Stack & CallFrames**: Fixed-size value evaluation stack with call frames tracking return addresses, base stack slots, and function pointers.
    - **Heap**: Managed pool of strings, arrays, functions, closures, classes, and instances.
    - **Hot-Path Detection**: Transparent invocation profiling triggering dynamic JIT compilation.
 
-4. **`libs/ely_jit`**: Just-In-Time compiler powered by [Cranelift](https://cranelift.dev/).
+5. **`libs/ely_jit`**: Just-In-Time compiler powered by [Cranelift](https://cranelift.dev/).
    - **`JitEngine`**: Configures ISA builder, target machine specifications, registers C-ABI runtime symbols, and manages executable memory.
    - **`JitCompiler`**: Lowers Elysabettian bytecode instructions into Cranelift SSA Intermediate Representation (IR), constructs Control Flow Graphs (CFG), and compiles them to native machine code.
 
-5. **`tools/ely_cli`**: Command-line interface and interactive environment.
+6. **`tools/ely_cli`**: Command-line interface and interactive environment.
    - **Script Execution**: Runs source files using VM or pure JIT native mode.
    - **REPL**: Interactive shell powered by `rustyline` with history and multi-line support.
    - **Inspection Flags**: `--dump-ir` for Cranelift SSA IR and `--dump-asm` for native VCode disassembly.
@@ -124,3 +130,23 @@ Values are stored in a compact 64-bit NaN-boxed layout:
 * Heap references stored in the 48-bit payload with the sign bit and Quiet NaN bits set.
 
 For the exhaustive specification, see [NaN-Boxing Value Specification](nan_boxing_specification.md).
+
+---
+
+## 6. Standard Library & Dynamic C-ABI Module Loader
+
+Elysabettian provides a modular standard library and foreign function interface (FFI) managed by [`ModuleRegistry`](../libs/ely_stdlib/src/lib.rs):
+
+### 6.1 Two-Tier Module Loading
+When an `import("<module>");` statement is executed:
+1. **Tier 1 (Built-in Modules)**: The registry looks up static built-in modules compiled into the binary:
+   - `math`: Square roots (`sqrt`), powers (`pow`), absolute values (`abs`), rounding (`floor`, `ceil`, `round`, `trunc`), trigonometry (`sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`), exponential and logarithms (`exp`, `log`, `log10`, `log2`), `hypot`, `min`, `max`, and mathematical constants (`PI`, `TAU`, `E`, `INFINITY`).
+   - `io` / `stdio`: High-resolution timing (`clock`, `time`), console input (`read`), thread execution throttling (`sleep`), and output flushing (`flush`).
+2. **Tier 2 (Foreign Shared Objects)**: If not found among built-ins, the loader searches for `lib<module>.so` or `<module>.so` across designated search directories (`./modules`, `./`, `/usr/local/lib/ely`) and loads them dynamically using `libloading`.
+
+### 6.2 C-ABI Plugin Specification
+Foreign modules authored in C, C++, or Rust export a single initialization function:
+```c
+int ely_init_module(ElyApi* api);
+```
+where `ElyApi` exposes C-compatible function pointers to dynamically register functions and numeric constants into the VM without requiring engine recompilation.

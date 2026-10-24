@@ -21,7 +21,7 @@ pub enum InterpretResult {
     RuntimeError,
 }
 
-pub type NativeFn = fn(arg_count: u8, args: &[Value]) -> Value;
+pub use ely_stdlib::{CallableNative, NativeFn};
 
 pub const MAX_FRAMES: usize = 64;
 
@@ -33,10 +33,12 @@ pub struct VM {
     pub stack: Vec<Value>,
     pub frames: Vec<CallFrame>,
     pub globals: HashMap<u32, Value>,
-    pub natives: HashMap<u32, NativeFn>,
+    pub natives: HashMap<u32, CallableNative>,
     pub heap: Vec<HeapObject>,
     pub open_upvalues: Vec<usize>,
     pub jit_engine: Option<ely_jit::engine::JitEngine>,
+    pub registry: ely_stdlib::ModuleRegistry,
+    pub interner: ely_core::interner::StringInterner,
 }
 
 impl VM {
@@ -50,6 +52,8 @@ impl VM {
             heap: Vec::new(),
             open_upvalues: Vec::new(),
             jit_engine: ely_jit::engine::JitEngine::new().ok(),
+            registry: ely_stdlib::ModuleRegistry::new(),
+            interner: ely_core::interner::StringInterner::new(),
         }
     }
 
@@ -112,13 +116,13 @@ impl VM {
         self.stack[self.stack.len() - 1 - distance]
     }
 
-    pub fn define_native(&mut self, name_id: u32, function: NativeFn) {
-        self.natives.insert(name_id, function);
+    pub fn define_native(&mut self, name_id: u32, function: impl Into<CallableNative>) {
+        self.natives.insert(name_id, function.into());
     }
 
     /// Registers all standard library functions and constants.
     pub fn register_stdlib(&mut self, interner: &mut ely_core::interner::StringInterner) {
-        ely_stdlib::register_all(&mut self.natives, &mut self.globals, interner);
+        self.registry.register_all_builtins(&mut self.natives, &mut self.globals, interner);
     }
 
     /// Allocates an object on the heap and returns a NaN-boxed Value reference.

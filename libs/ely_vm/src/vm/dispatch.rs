@@ -209,7 +209,7 @@ impl VM {
                         let name_id = callee.as_obj() as u32;
                         if let Some(&native_fn) = self.natives.get(&name_id) {
                             let args_start = self.stack.len() - arg_count;
-                            let result = native_fn(arg_count as u8, &self.stack[args_start..]);
+                            let result = unsafe { native_fn.invoke(arg_count as u8, &self.stack[args_start..]) };
                             // Remove args and callee
                             self.stack.truncate(args_start - 1);
                             self.push(result);
@@ -522,7 +522,7 @@ impl VM {
                         // Call field value
                         if let Some(&native_fn) = self.natives.get(&(val.as_obj() as u32)) {
                             let args_start = self.stack.len() - arg_count;
-                            let result = native_fn(arg_count as u8, &self.stack[args_start..]);
+                            let result = unsafe { native_fn.invoke(arg_count as u8, &self.stack[args_start..]) };
                             self.stack.truncate(args_start - 1);
                             self.push(result);
                         } else {
@@ -623,6 +623,17 @@ impl VM {
                             .push(CallFrame::with_closure(func_chunk, slots, cid));
                     } else {
                         self.frames.push(CallFrame::new(func_chunk, slots));
+                    }
+                }
+                Opcode::Import => {
+                    let const_idx = self.frames[frame_idx].read_byte() as usize;
+                    let module_name = match self.frames[frame_idx].chunk.string_constants.get(const_idx) {
+                        Some(s) => s.clone(),
+                        None => return InterpretResult::RuntimeError,
+                    };
+                    if !self.registry.load(&module_name, &mut self.natives, &mut self.globals, &mut self.interner) {
+                        eprintln!("Runtime Error: Failed to import module '{}'.", module_name);
+                        return InterpretResult::RuntimeError;
                     }
                 }
             }

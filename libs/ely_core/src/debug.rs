@@ -149,6 +149,7 @@ pub fn disassemble_instruction(chunk: &Chunk, offset: usize) -> usize {
         Opcode::ArrayBuild => byte_instruction("arrbld", chunk, offset),
         Opcode::ArrayIndex => simple_instruction("arridx", offset),
         Opcode::ArrayStore => simple_instruction("arrstr", offset),
+        Opcode::Import => byte_instruction("import", chunk, offset),
     }
 }
 

@@ -222,14 +222,14 @@ impl<'a> Scanner<'a> {
                 };
                 self.make_token(token_type)
             }
-            '"' => self.string(),
+            '"' | '\'' => self.string(c),
             _ => self.error_token("Unexpected character."),
         }
     }
 
-    /// Scans a double-quoted string literal, supporting multiline strings.
-    fn string(&mut self) -> Token<'a> {
-        while self.peek() != '"' && !self.is_at_end() {
+    /// Scans a quoted string literal (single or double quotes), supporting multiline strings.
+    fn string(&mut self, quote: char) -> Token<'a> {
+        while self.peek() != quote && !self.is_at_end() {
             if self.peek() == '\n' {
                 self.line += 1;
             }

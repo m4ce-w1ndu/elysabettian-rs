@@ -1,5 +1,6 @@
 use std::io::{self, Write};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ely_core::value::Value;
 use crate::NativeModule;
@@ -10,7 +11,9 @@ pub fn module() -> NativeModule {
     module
         .add_fn("clock", clock)
         .add_fn("time", clock)
-        .add_fn("read", read);
+        .add_fn("read", read)
+        .add_fn("sleep", sleep)
+        .add_fn("flush", flush);
     module
 }
 
@@ -32,5 +35,22 @@ pub fn read(_argc: u8, _args: &[Value]) -> Value {
             return Value::number(num);
         }
     }
+    Value::null()
+}
+
+/// Suspends execution for the given duration in seconds: `sleep(seconds)`
+pub fn sleep(argc: u8, args: &[Value]) -> Value {
+    if argc >= 1 && args[0].is_number() {
+        let secs = args[0].as_number();
+        if secs > 0.0 {
+            thread::sleep(Duration::from_secs_f64(secs));
+        }
+    }
+    Value::null()
+}
+
+/// Flushes standard output: `flush()`
+pub fn flush(_argc: u8, _args: &[Value]) -> Value {
+    let _ = io::stdout().flush();
     Value::null()
 }

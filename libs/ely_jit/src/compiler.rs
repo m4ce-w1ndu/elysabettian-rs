@@ -164,7 +164,8 @@ impl<'a> JitCompiler<'a> {
                         | Opcode::DefineGlobal
                         | Opcode::GetGlobal
                         | Opcode::SetGlobal
-                        | Opcode::Closure => scan_ip += 1,
+                        | Opcode::Closure
+                        | Opcode::Import => scan_ip += 1,
                         Opcode::Jump | Opcode::JumpIfFalse => {
                             let high = chunk.code[scan_ip] as usize;
                             let low = chunk.code[scan_ip + 1] as usize;
@@ -559,6 +560,10 @@ impl<'a> JitCompiler<'a> {
                         eval_stack.pop();
                     }
                     Opcode::Nop => {}
+                    Opcode::Import => {
+                        let _const_idx = chunk.code[ip] as usize;
+                        ip += 1;
+                    }
                     _ => {
                         return Err(format!("Unsupported opcode for JIT: {:?}", op));
                     }
