@@ -195,6 +195,27 @@ impl<'a> JitCompiler<'a> {
                     .map_err(|_| format!("Invalid opcode byte at offset {}", ip))?;
                 ip += 1;
 
+                if current_block_terminated {
+                    // The current basic block has already ended with a terminator (Return or unconditional Jump).
+                    // Skip dead/unreachable code until we reach a branch target block.
+                    match op {
+                        Opcode::Constant
+                        | Opcode::GetLocal
+                        | Opcode::SetLocal
+                        | Opcode::GetGlobal
+                        | Opcode::DefineGlobal
+                        | Opcode::SetGlobal
+                        | Opcode::Call => {
+                            ip += 1;
+                        }
+                        Opcode::Jump | Opcode::JumpIfFalse | Opcode::Loop => {
+                            ip += 2;
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 match op {
                     Opcode::Constant => {
                         let const_idx = chunk.code[ip] as usize;

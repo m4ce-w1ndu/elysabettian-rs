@@ -210,4 +210,31 @@ mod tests {
         let native_func: extern "C" fn() -> f64 = unsafe { std::mem::transmute(code_ptr) };
         assert_eq!(native_func(), 32.0);
     }
+
+    #[test]
+    fn test_jit_dead_code_after_return() {
+        let mut engine = JitEngine::new().expect("Failed to create JIT engine");
+        let mut chunk = Chunk::new();
+
+        let c_val = chunk.add_constant(Value::number(42.0));
+        let c_dead = chunk.add_constant(Value::number(999.0));
+
+        chunk.write_opcode(Opcode::Constant, 1);
+        chunk.write_byte(c_val as u8, 1);
+        chunk.write_opcode(Opcode::Return, 1);
+
+        // Dead code after return: should be safely ignored by JIT CFG lowering
+        chunk.write_opcode(Opcode::Constant, 1);
+        chunk.write_byte(c_dead as u8, 1);
+        chunk.write_opcode(Opcode::Nop, 1);
+        chunk.write_opcode(Opcode::Return, 1);
+
+        let mut compiler = JitCompiler::new(&mut engine);
+        let code_ptr = compiler
+            .compile_function(&chunk, 0, "test_dead_code")
+            .expect("JIT compilation failed on dead code");
+
+        let native_func: extern "C" fn() -> f64 = unsafe { std::mem::transmute(code_ptr) };
+        assert_eq!(native_func(), 42.0);
+    }
 }
