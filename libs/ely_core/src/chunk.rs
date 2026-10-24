@@ -13,6 +13,14 @@ pub struct LineInfo {
     pub line: u32,
 }
 
+/// Describes a compiled function prototype with its own bytecode chunk and signature.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionDescriptor {
+    pub arity: usize,
+    pub chunk: Chunk,
+    pub name: Option<String>,
+}
+
 /// A contiguous chunk of compiled bytecode, constant pool values, and debug line mappings.
 ///
 /// `Chunk` acts as the primary compilation unit emitted by the frontend compiler
@@ -27,6 +35,8 @@ pub struct Chunk {
     pub lines: Vec<LineInfo>,
     /// String literal constants loaded into the VM heap during chunk initialization.
     pub string_constants: Vec<String>,
+    /// Compiled function prototypes declared within this chunk.
+    pub function_constants: Vec<FunctionDescriptor>,
 }
 
 impl Chunk {
@@ -104,5 +114,11 @@ impl Chunk {
     pub fn add_string_constant(&mut self, s: String) -> usize {
         self.string_constants.push(s);
         self.string_constants.len() - 1
+    }
+
+    /// Appends a compiled function descriptor to the chunk and returns its 0-based index.
+    pub fn add_function_constant(&mut self, desc: FunctionDescriptor) -> usize {
+        self.function_constants.push(desc);
+        self.function_constants.len() - 1
     }
 }

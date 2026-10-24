@@ -16,7 +16,8 @@ use ely_core::opcode::Opcode;
                     | Opcode::GetGlobal
                     | Opcode::DefineGlobal
                     | Opcode::SetGlobal
-                    | Opcode::Call => {
+                    | Opcode::Call
+                    | Opcode::Closure => {
                         i += 2;
                     }
                     Opcode::Jump | Opcode::JumpIfFalse | Opcode::Loop => {
@@ -288,12 +289,28 @@ use ely_core::opcode::Opcode;
         assert_eq!(
             ops,
             vec![
+                Opcode::Closure,
+                Opcode::DefineGlobal,
+                Opcode::Nop,
+                Opcode::Return,
+            ]
+        );
+
+        assert_eq!(chunk.function_constants.len(), 1);
+        let func_desc = &chunk.function_constants[0];
+        assert_eq!(func_desc.name.as_deref(), Some("add"));
+        assert_eq!(func_desc.arity, 2);
+
+        let func_ops = extract_opcodes(&func_desc.chunk);
+        assert_eq!(
+            func_ops,
+            vec![
                 Opcode::GetLocal,
                 Opcode::GetLocal,
                 Opcode::Add,
                 Opcode::Print,
-                Opcode::Nop,
-                Opcode::Return,
+                Opcode::Pop,
+                Opcode::Pop,
                 Opcode::Nop,
                 Opcode::Return,
             ]

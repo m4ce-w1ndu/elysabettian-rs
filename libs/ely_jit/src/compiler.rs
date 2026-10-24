@@ -121,7 +121,8 @@ impl<'a> JitCompiler<'a> {
                         Opcode::Constant
                         | Opcode::DefineGlobal
                         | Opcode::GetGlobal
-                        | Opcode::SetGlobal => scan_ip += 1,
+                        | Opcode::SetGlobal
+                        | Opcode::Closure => scan_ip += 1,
                         Opcode::Jump | Opcode::JumpIfFalse => {
                             let high = chunk.code[scan_ip] as usize;
                             let low = chunk.code[scan_ip + 1] as usize;
@@ -205,7 +206,8 @@ impl<'a> JitCompiler<'a> {
                         | Opcode::GetGlobal
                         | Opcode::DefineGlobal
                         | Opcode::SetGlobal
-                        | Opcode::Call => {
+                        | Opcode::Call
+                        | Opcode::Closure => {
                             ip += 1;
                         }
                         Opcode::Jump | Opcode::JumpIfFalse | Opcode::Loop => {
@@ -240,6 +242,16 @@ impl<'a> JitCompiler<'a> {
                     }
                     Opcode::False => {
                         let bits = ElyValue::bool(false).0 as i64;
+                        let i64_val = builder.ins().iconst(types::I64, bits);
+                        eval_stack.push(builder.ins().bitcast(types::F64, MemFlags::new(), i64_val));
+                    }
+                    Opcode::Closure => {
+                        let const_idx = chunk.code[ip] as usize;
+                        ip += 1;
+                        let const_val = chunk
+                            .get_constant(const_idx)
+                            .ok_or("Constant not found in chunk pool for Opcode::Closure")?;
+                        let bits = const_val.0 as i64;
                         let i64_val = builder.ins().iconst(types::I64, bits);
                         eval_stack.push(builder.ins().bitcast(types::F64, MemFlags::new(), i64_val));
                     }

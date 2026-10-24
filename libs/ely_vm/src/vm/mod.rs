@@ -58,13 +58,36 @@ impl VM {
         self.reset_stack();
         // Slot 0 is reserved for the script/caller function (stack convention)
         self.push(Value::null());
-        self.frames.push(CallFrame::new(Rc::new(chunk.clone()), 0));
 
+        let mut chunk = chunk.clone();
+        self.load_chunk_objects(&mut chunk);
+
+        self.frames.push(CallFrame::new(Rc::new(chunk), 0));
+        self.run()
+    }
+
+    /// Recursively loads string constants and compiled functions onto the heap and links their handles.
+    fn load_chunk_objects(&mut self, chunk: &mut Chunk) {
         for s in &chunk.string_constants {
             self.allocate_object(HeapObject::String(s.clone()));
         }
 
-        self.run()
+        let mut func_vals = Vec::with_capacity(chunk.function_constants.len());
+        for f in &mut chunk.function_constants {
+            self.load_chunk_objects(&mut f.chunk);
+            let mut obj_func = crate::heap::ObjFunction::new(f.arity, f.name.clone());
+            obj_func.chunk = Rc::new(f.chunk.clone());
+            let val = self.allocate_object(HeapObject::Function(obj_func));
+            func_vals.push(val);
+        }
+
+        for (i, &val) in func_vals.iter().enumerate() {
+            for c in chunk.constants.iter_mut() {
+                if c.is_obj() && c.as_obj() as usize == i {
+                    *c = val;
+                }
+            }
+        }
     }
 
     /// Resets the value stack and call frame stack.

@@ -236,6 +236,7 @@ impl<'a> Compiler<'a> {
         );
 
         self.block();
+        self.end_scope();
         self.emit_return();
 
         arity
@@ -244,11 +245,47 @@ impl<'a> Compiler<'a> {
     /// Compiles a function declaration, parsing signature and body.
     pub(crate) fn func_declaration(&mut self) {
         let global = self.parse_variable("Expected function name for signature.");
+        let func_name = self.parser.previous.lexeme.to_string();
+
         if self.scope_depth > 0 {
             self.mark_initialized();
         }
 
-        _ = self.function();
+        let prev_chunk = std::mem::replace(&mut self.chunk, ely_core::chunk::Chunk::new());
+        let prev_type = self.function_type;
+        self.function_type = FunctionType::Function;
+        let prev_locals = std::mem::take(&mut self.locals);
+        let prev_depth = self.scope_depth;
+        self.scope_depth = 0;
+
+        self.locals.push(crate::compiler::LocalVar {
+            name: crate::token::Token {
+                token_type: TokenType::Identifier,
+                lexeme: "",
+                line: 0,
+            },
+            depth: 0,
+            is_capture: false,
+        });
+
+        let arity = self.function();
+
+        let func_chunk = std::mem::replace(&mut self.chunk, prev_chunk);
+        self.locals = prev_locals;
+        self.scope_depth = prev_depth;
+        self.function_type = prev_type;
+
+        let desc = ely_core::chunk::FunctionDescriptor {
+            arity,
+            chunk: func_chunk,
+            name: Some(func_name),
+        };
+
+        let func_idx = self.chunk.add_function_constant(desc);
+        let const_idx = self.chunk.add_constant(ely_core::value::Value::obj(func_idx as u64));
+
+        self.emit_opcode(Opcode::Closure);
+        self.emit_byte(const_idx as u8);
 
         self.define_variable(global);
     }
