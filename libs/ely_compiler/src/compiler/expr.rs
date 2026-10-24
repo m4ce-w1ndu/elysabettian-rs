@@ -71,6 +71,33 @@ impl<'a> Compiler<'a> {
         self.emit_byte(arg);
     }
 
+    pub(crate) fn postfix_inc_dec(&mut self, get_op: Opcode, set_op: Opcode, arg: u8) {
+        let is_inc = self.parser.previous.token_type == TokenType::PlusPlus;
+
+        // Take the old value
+        self.emit_opcode(get_op);
+        self.emit_byte(arg);
+
+        // Take the old value again
+        self.emit_opcode(get_op);
+        self.emit_byte(arg);
+
+        // Add or subtract 1.0
+        self.emit_constant(Value::number(1.0));
+        if is_inc {
+            self.emit_opcode(Opcode::Add);
+        } else {
+            self.emit_opcode(Opcode::Subtract);
+        }
+
+        // Store the new value in the variable
+        self.emit_opcode(set_op);
+        self.emit_byte(arg);
+
+        // Remove the value from the stack
+        self.emit_opcode(Opcode::Pop);
+    }
+
     /// Parses an infix binary expression and emits the corresponding opcode.
     pub(crate) fn binary(&mut self) {
         let operator_type = self.parser.previous.token_type;
@@ -168,6 +195,10 @@ impl<'a> Compiler<'a> {
             // Store result
             self.emit_opcode(set_op);
             self.emit_byte(arg);
+        } else if self.parser.match_token(TokenType::PlusPlus)
+            || self.parser.match_token(TokenType::MinusMinus)
+        {
+            self.postfix_inc_dec(get_op, set_op, arg);
         } else {
             self.emit_opcode(get_op);
             self.emit_byte(arg);

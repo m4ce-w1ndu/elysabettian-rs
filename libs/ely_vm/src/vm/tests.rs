@@ -262,3 +262,22 @@ use ely_core::value::Value;
         let result = vm.interpret(&chunk);
         assert_eq!(result, InterpretResult::Ok);
     }
+
+    #[test]
+    fn test_vm_interpret_postfix_increment_decrement() {
+        let mut interner = ely_core::interner::StringInterner::new();
+        let source = "
+            func compute() {
+                var x = 10;
+                var old_x = x++;
+                var old_x2 = x--;
+                var y = x++ * 2;
+                return old_x + old_x2 + y + x;
+            }
+            compute();
+        ";
+        let chunk = ely_compiler::compiler::compile(source, &mut interner).expect("Compilation failed");
+        let mut vm = VM::new();
+        let result = vm.interpret(&chunk);
+        assert_eq!(result, InterpretResult::Ok);
+    }

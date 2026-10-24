@@ -473,3 +473,111 @@ use ely_core::opcode::Opcode;
         assert!(compile("++5;", &mut interner).is_none());
         assert!(compile("--5;", &mut interner).is_none());
     }
+
+    #[test]
+    fn test_compile_postfix_increment_decrement() {
+        // Global variables
+        let source_global = "
+            var x = 10;
+            x++;
+            x--;
+        ";
+        let mut interner = StringInterner::new();
+        let chunk = compile(source_global, &mut interner).expect("Compilation failed");
+        let ops = extract_opcodes(&chunk);
+
+        assert_eq!(
+            ops,
+            vec![
+                Opcode::Constant,
+                Opcode::DefineGlobal,
+                // x++: Get, Get, Constant(1.0), Add, Set, Pop, Pop(expr statement)
+                Opcode::GetGlobal,
+                Opcode::GetGlobal,
+                Opcode::Constant,
+                Opcode::Add,
+                Opcode::SetGlobal,
+                Opcode::Pop,
+                Opcode::Pop,
+                // x--: Get, Get, Constant(1.0), Subtract, Set, Pop, Pop(expr statement)
+                Opcode::GetGlobal,
+                Opcode::GetGlobal,
+                Opcode::Constant,
+                Opcode::Subtract,
+                Opcode::SetGlobal,
+                Opcode::Pop,
+                Opcode::Pop,
+                Opcode::Nop,
+                Opcode::Return,
+            ]
+        );
+
+        // Local variables
+        let source_local = "
+            {
+                var y = 20;
+                y++;
+                y--;
+            }
+        ";
+        let mut interner = StringInterner::new();
+        let chunk = compile(source_local, &mut interner).expect("Compilation failed");
+        let ops = extract_opcodes(&chunk);
+
+        assert_eq!(
+            ops,
+            vec![
+                Opcode::Constant,
+                // y++
+                Opcode::GetLocal,
+                Opcode::GetLocal,
+                Opcode::Constant,
+                Opcode::Add,
+                Opcode::SetLocal,
+                Opcode::Pop,
+                Opcode::Pop,
+                // y--
+                Opcode::GetLocal,
+                Opcode::GetLocal,
+                Opcode::Constant,
+                Opcode::Subtract,
+                Opcode::SetLocal,
+                Opcode::Pop,
+                Opcode::Pop,
+                // End scope pops y
+                Opcode::Pop,
+                Opcode::Nop,
+                Opcode::Return,
+            ]
+        );
+
+        // Expression usage: var y = x++ * 2;
+        let source_expr = "
+            var a = 5;
+            var b = a++ * 2;
+        ";
+        let mut interner = StringInterner::new();
+        let chunk = compile(source_expr, &mut interner).expect("Compilation failed");
+        let ops = extract_opcodes(&chunk);
+
+        assert_eq!(
+            ops,
+            vec![
+                Opcode::Constant,
+                Opcode::DefineGlobal,
+                // a++
+                Opcode::GetGlobal,
+                Opcode::GetGlobal,
+                Opcode::Constant,
+                Opcode::Add,
+                Opcode::SetGlobal,
+                Opcode::Pop,
+                // * 2
+                Opcode::Constant,
+                Opcode::Multiply,
+                Opcode::DefineGlobal,
+                Opcode::Nop,
+                Opcode::Return,
+            ]
+        );
+    }
