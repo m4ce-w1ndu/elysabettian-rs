@@ -56,6 +56,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag_name || github.ref }}
+          fetch-depth: 0
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -146,6 +149,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag_name || github.ref }}
+          fetch-depth: 0
 
       - name: Resolve Version Name
         id: resolve_version
