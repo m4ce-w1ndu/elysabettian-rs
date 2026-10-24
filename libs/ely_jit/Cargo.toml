@@ -8,4 +8,6 @@ ely_core.workspace = true
 cranelift.workspace = true
 cranelift-jit.workspace = true
 cranelift-module.workspace = true
+cranelift-native.workspace = true
 target-lexicon.workspace = true
+anyhow.workspace = true
