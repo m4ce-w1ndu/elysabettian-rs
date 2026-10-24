@@ -53,10 +53,8 @@ impl Chunk {
         let offset = self.code.len() as u32;
         self.code.push(byte);
 
-        if let Some(last) = self.lines.last() {
-            if last.line == line {
-                return;
-            }
+        if self.lines.last().is_some_and(|last| last.line == line) {
+            return;
         }
 
         self.lines.push(LineInfo { offset, line })

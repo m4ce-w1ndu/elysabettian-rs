@@ -56,6 +56,18 @@ Comprehensive design specifications and architectural documentation are availabl
 
 ## Prerequisites & Installation
 
+### Pre-Compiled Standalone Binaries (GitHub Releases)
+Automated multi-platform binaries are published for every release tag:
+- **Linux Static (`x86_64-unknown-linux-musl`)**: Self-contained static binary without external glibc dependencies; runs on any Linux distribution (Ubuntu, Debian, Fedora, Arch, Alpine, RHEL, CentOS, etc.).
+- **Linux GNU (`x86_64-unknown-linux-gnu`)**: Standard dynamically linked Linux binary.
+- **macOS Apple Silicon (`aarch64-apple-darwin`)**: Native ARM64 binary for M1/M2/M3/M4.
+- **macOS Intel (`x86_64-apple-darwin`)**: Native x86_64 binary for Intel Macs.
+- **Windows (`x86_64-pc-windows-msvc`)**: Native x64 Windows executable.
+
+Download archives and SHA256 checksums directly from the [GitHub Releases](https://github.com/m4ce-w1ndu/elysabettian-rs/releases) page.
+
+### Building from Source
+
 - **Rust toolchain:** Rust 1.75+ (or latest stable) with Cargo.
 - **Platform support:** Linux, macOS, and Windows (x86_64, AArch64).
 

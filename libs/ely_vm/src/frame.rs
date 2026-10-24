@@ -1,6 +1,6 @@
-use std::rc::Rc;
 use ely_core::chunk::Chunk;
 use ely_core::value::Value;
+use std::rc::Rc;
 
 /// Represents an active call frame in the virtual machine call stack.
 pub struct CallFrame {

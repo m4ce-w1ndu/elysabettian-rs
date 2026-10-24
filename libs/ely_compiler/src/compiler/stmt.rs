@@ -60,8 +60,10 @@ impl<'a> Compiler<'a> {
     /// Compiles an `import("<module>");` or `import "<module>";` statement.
     pub(crate) fn import_statement(&mut self) {
         let has_paren = self.parser.match_token(TokenType::OpenParen);
-        self.parser
-            .consume(TokenType::String, "Expected module name string after 'import'.");
+        self.parser.consume(
+            TokenType::String,
+            "Expected module name string after 'import'.",
+        );
 
         let lexeme = self.parser.previous.lexeme;
         let module_name = if lexeme.len() >= 2 {
@@ -310,7 +312,9 @@ impl<'a> Compiler<'a> {
         };
 
         let func_idx = self.chunk.add_function_constant(desc);
-        let const_idx = self.chunk.add_constant(ely_core::value::Value::obj(func_idx as u64));
+        let const_idx = self
+            .chunk
+            .add_constant(ely_core::value::Value::obj(func_idx as u64));
 
         self.emit_opcode(Opcode::Closure);
         self.emit_byte(const_idx as u8);

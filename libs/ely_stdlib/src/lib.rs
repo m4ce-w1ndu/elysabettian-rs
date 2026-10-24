@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::ffi::{CStr, c_char, c_void};
+use std::ffi::{c_char, c_void, CStr};
 use std::path::{Path, PathBuf};
 
 use ely_core::interner::StringInterner;
@@ -51,16 +51,9 @@ impl CallableNative {
 #[repr(C)]
 pub struct ElyApi {
     pub ctx: *mut c_void,
-    pub register_fn: unsafe extern "C" fn(
-        ctx: *mut c_void,
-        name: *const c_char,
-        func: ExternNativeFn,
-    ),
-    pub register_number: unsafe extern "C" fn(
-        ctx: *mut c_void,
-        name: *const c_char,
-        val: f64,
-    ),
+    pub register_fn:
+        unsafe extern "C" fn(ctx: *mut c_void, name: *const c_char, func: ExternNativeFn),
+    pub register_number: unsafe extern "C" fn(ctx: *mut c_void, name: *const c_char, val: f64),
 }
 
 /// Internal context structure passed to C registration trampolines.
@@ -70,11 +63,7 @@ struct LoadContext<'a> {
     interner: &'a mut StringInterner,
 }
 
-unsafe extern "C" fn c_register_fn(
-    ctx: *mut c_void,
-    name: *const c_char,
-    func: ExternNativeFn,
-) {
+unsafe extern "C" fn c_register_fn(ctx: *mut c_void, name: *const c_char, func: ExternNativeFn) {
     if ctx.is_null() || name.is_null() {
         return;
     }
@@ -87,11 +76,7 @@ unsafe extern "C" fn c_register_fn(
     }
 }
 
-unsafe extern "C" fn c_register_number(
-    ctx: *mut c_void,
-    name: *const c_char,
-    val: f64,
-) {
+unsafe extern "C" fn c_register_number(ctx: *mut c_void, name: *const c_char, val: f64) {
     if ctx.is_null() || name.is_null() {
         return;
     }
@@ -214,7 +199,9 @@ impl ModuleRegistry {
             for filename in &filenames {
                 let candidate = search_dir.join(filename);
                 if candidate.exists() {
-                    if let Ok(loaded) = self.load_external_so(&candidate, natives, globals, interner) {
+                    if let Ok(loaded) =
+                        self.load_external_so(&candidate, natives, globals, interner)
+                    {
                         if loaded {
                             return true;
                         }
@@ -296,14 +283,22 @@ mod tests {
         assert!(registry.load("math", &mut natives, &mut globals, &mut interner));
         assert!(registry.load("io", &mut natives, &mut globals, &mut interner));
         assert!(registry.load("stdio", &mut natives, &mut globals, &mut interner));
-        assert!(!registry.load("nonexistent_module", &mut natives, &mut globals, &mut interner));
+        assert!(!registry.load(
+            "nonexistent_module",
+            &mut natives,
+            &mut globals,
+            &mut interner
+        ));
 
         let sqrt_id = interner.intern("sqrt");
         assert!(natives.contains_key(&sqrt_id));
         assert!(globals.contains_key(&sqrt_id));
 
         let pi_id = interner.intern("PI");
-        assert_eq!(globals.get(&pi_id).unwrap().as_number(), std::f64::consts::PI);
+        assert_eq!(
+            globals.get(&pi_id).unwrap().as_number(),
+            std::f64::consts::PI
+        );
     }
 
     #[test]

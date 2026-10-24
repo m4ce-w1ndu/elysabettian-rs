@@ -85,7 +85,7 @@ impl TryFrom<u8> for Opcode {
     #[inline]
     fn try_from(byte: u8) -> Result<Self, Self::Error> {
         if byte <= Opcode::Import as u8 {
-            Ok(unsafe { std::mem::transmute(byte) })
+            Ok(unsafe { std::mem::transmute::<u8, Opcode>(byte) })
         } else {
             Err(byte)
         }

@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use clap::Parser;
+use std::path::PathBuf;
 
 /// Command line interface arguments for Elysabettian.
 #[derive(Parser, Debug)]

@@ -122,7 +122,8 @@ impl VM {
 
     /// Registers all standard library functions and constants.
     pub fn register_stdlib(&mut self, interner: &mut ely_core::interner::StringInterner) {
-        self.registry.register_all_builtins(&mut self.natives, &mut self.globals, interner);
+        self.registry
+            .register_all_builtins(&mut self.natives, &mut self.globals, interner);
     }
 
     /// Allocates an object on the heap and returns a NaN-boxed Value reference.

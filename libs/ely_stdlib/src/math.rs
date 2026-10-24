@@ -1,5 +1,5 @@
-use ely_core::value::Value;
 use crate::NativeModule;
+use ely_core::value::Value;
 
 /// Constructs the `math` native standard library module.
 pub fn module() -> NativeModule {

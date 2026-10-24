@@ -1,6 +1,6 @@
 use crate::frame::CallFrame;
 use crate::heap::HeapObject;
-use crate::vm::{InterpretResult, VM, MAX_FRAMES};
+use crate::vm::{InterpretResult, MAX_FRAMES, VM};
 use ely_core::opcode::Opcode;
 use ely_core::value::Value;
 
@@ -209,13 +209,16 @@ impl VM {
                         let name_id = callee.as_obj() as u32;
                         if let Some(&native_fn) = self.natives.get(&name_id) {
                             let args_start = self.stack.len() - arg_count;
-                            let result = unsafe { native_fn.invoke(arg_count as u8, &self.stack[args_start..]) };
+                            let result = unsafe {
+                                native_fn.invoke(arg_count as u8, &self.stack[args_start..])
+                            };
                             // Remove args and callee
                             self.stack.truncate(args_start - 1);
                             self.push(result);
                         } else {
                             let func_id = callee.as_obj() as usize;
-                            let is_func = matches!(self.heap.get(func_id), Some(HeapObject::Function(_)));
+                            let is_func =
+                                matches!(self.heap.get(func_id), Some(HeapObject::Function(_)));
                             if is_func {
                                 match self.try_call_jit(func_id, arg_count) {
                                     Ok(true) => {
@@ -241,65 +244,67 @@ impl VM {
                                 match self.get_object(callee) {
                                     Some(HeapObject::Function(_)) => unreachable!(),
                                     Some(HeapObject::Closure(closure)) => {
-                                    let func = match self.heap.get(closure.function_id) {
-                                        Some(HeapObject::Function(f)) => f,
-                                        _ => return InterpretResult::RuntimeError,
-                                    };
+                                        let func = match self.heap.get(closure.function_id) {
+                                            Some(HeapObject::Function(f)) => f,
+                                            _ => return InterpretResult::RuntimeError,
+                                        };
 
-                                    if arg_count != func.arity {
-                                        return InterpretResult::RuntimeError;
-                                    }
-
-                                    if self.frames.len() == MAX_FRAMES {
-                                        return InterpretResult::RuntimeError;
-                                    }
-
-                                    let slots = self.stack.len() - arg_count - 1;
-                                    let chunk = func.chunk.clone();
-                                    let closure_id = callee.as_obj() as usize;
-                                    self.frames
-                                        .push(CallFrame::with_closure(chunk, slots, closure_id));
-                                }
-                                Some(HeapObject::Class(_)) => {
-                                    let class_id = callee.as_obj() as usize;
-                                    let instance_val = self.allocate_object(HeapObject::Instance(
-                                        crate::heap::ObjInstance::new(class_id),
-                                    ));
-                                    let callee_slot = self.stack.len() - arg_count - 1;
-                                    self.stack[callee_slot] = instance_val;
-                                }
-                                Some(HeapObject::BoundMethod(bound)) => {
-                                    let receiver = bound.receiver;
-                                    let method_id = bound.method_id;
-                                    let callee_slot = self.stack.len() - arg_count - 1;
-                                    self.stack[callee_slot] = receiver;
-
-                                    let func = match self.heap.get(method_id) {
-                                        Some(HeapObject::Function(f)) => f,
-                                        Some(HeapObject::Closure(c)) => {
-                                            match self.heap.get(c.function_id) {
-                                                Some(HeapObject::Function(f)) => f,
-                                                _ => return InterpretResult::RuntimeError,
-                                            }
+                                        if arg_count != func.arity {
+                                            return InterpretResult::RuntimeError;
                                         }
-                                        _ => return InterpretResult::RuntimeError,
-                                    };
 
-                                    if arg_count != func.arity {
-                                        return InterpretResult::RuntimeError;
+                                        if self.frames.len() == MAX_FRAMES {
+                                            return InterpretResult::RuntimeError;
+                                        }
+
+                                        let slots = self.stack.len() - arg_count - 1;
+                                        let chunk = func.chunk.clone();
+                                        let closure_id = callee.as_obj() as usize;
+                                        self.frames.push(CallFrame::with_closure(
+                                            chunk, slots, closure_id,
+                                        ));
                                     }
-
-                                    if self.frames.len() == MAX_FRAMES {
-                                        return InterpretResult::RuntimeError;
+                                    Some(HeapObject::Class(_)) => {
+                                        let class_id = callee.as_obj() as usize;
+                                        let instance_val =
+                                            self.allocate_object(HeapObject::Instance(
+                                                crate::heap::ObjInstance::new(class_id),
+                                            ));
+                                        let callee_slot = self.stack.len() - arg_count - 1;
+                                        self.stack[callee_slot] = instance_val;
                                     }
+                                    Some(HeapObject::BoundMethod(bound)) => {
+                                        let receiver = bound.receiver;
+                                        let method_id = bound.method_id;
+                                        let callee_slot = self.stack.len() - arg_count - 1;
+                                        self.stack[callee_slot] = receiver;
 
-                                    let slots = self.stack.len() - arg_count - 1;
-                                    let chunk = func.chunk.clone();
-                                    self.frames.push(CallFrame::new(chunk, slots));
+                                        let func = match self.heap.get(method_id) {
+                                            Some(HeapObject::Function(f)) => f,
+                                            Some(HeapObject::Closure(c)) => {
+                                                match self.heap.get(c.function_id) {
+                                                    Some(HeapObject::Function(f)) => f,
+                                                    _ => return InterpretResult::RuntimeError,
+                                                }
+                                            }
+                                            _ => return InterpretResult::RuntimeError,
+                                        };
+
+                                        if arg_count != func.arity {
+                                            return InterpretResult::RuntimeError;
+                                        }
+
+                                        if self.frames.len() == MAX_FRAMES {
+                                            return InterpretResult::RuntimeError;
+                                        }
+
+                                        let slots = self.stack.len() - arg_count - 1;
+                                        let chunk = func.chunk.clone();
+                                        self.frames.push(CallFrame::new(chunk, slots));
+                                    }
+                                    _ => return InterpretResult::RuntimeError,
                                 }
-                                _ => return InterpretResult::RuntimeError,
                             }
-                        }
                         }
                     } else {
                         return InterpretResult::RuntimeError;
@@ -522,7 +527,9 @@ impl VM {
                         // Call field value
                         if let Some(&native_fn) = self.natives.get(&(val.as_obj() as u32)) {
                             let args_start = self.stack.len() - arg_count;
-                            let result = unsafe { native_fn.invoke(arg_count as u8, &self.stack[args_start..]) };
+                            let result = unsafe {
+                                native_fn.invoke(arg_count as u8, &self.stack[args_start..])
+                            };
                             self.stack.truncate(args_start - 1);
                             self.push(result);
                         } else {
@@ -627,11 +634,17 @@ impl VM {
                 }
                 Opcode::Import => {
                     let const_idx = self.frames[frame_idx].read_byte() as usize;
-                    let module_name = match self.frames[frame_idx].chunk.string_constants.get(const_idx) {
-                        Some(s) => s.clone(),
-                        None => return InterpretResult::RuntimeError,
-                    };
-                    if !self.registry.load(&module_name, &mut self.natives, &mut self.globals, &mut self.interner) {
+                    let module_name =
+                        match self.frames[frame_idx].chunk.string_constants.get(const_idx) {
+                            Some(s) => s.clone(),
+                            None => return InterpretResult::RuntimeError,
+                        };
+                    if !self.registry.load(
+                        &module_name,
+                        &mut self.natives,
+                        &mut self.globals,
+                        &mut self.interner,
+                    ) {
                         eprintln!("Runtime Error: Failed to import module '{}'.", module_name);
                         return InterpretResult::RuntimeError;
                     }
@@ -639,7 +652,6 @@ impl VM {
             }
         }
     }
-
 
     fn binary_op<F>(&mut self, op: F) -> bool
     where
@@ -654,5 +666,4 @@ impl VM {
         self.push(Value::number(op(a, b)));
         true
     }
-
 }

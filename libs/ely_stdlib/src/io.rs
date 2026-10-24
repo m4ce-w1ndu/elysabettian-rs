@@ -2,8 +2,8 @@ use std::io::{self, Write};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use ely_core::value::Value;
 use crate::NativeModule;
+use ely_core::value::Value;
 
 /// Constructs the `io` native standard library module.
 pub fn module() -> NativeModule {

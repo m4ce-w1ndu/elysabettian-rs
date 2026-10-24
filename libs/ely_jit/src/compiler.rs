@@ -112,10 +112,8 @@ impl<'a> JitCompiler<'a> {
         self.engine.ctx.func.signature = sig;
 
         {
-            let mut builder = FunctionBuilder::new(
-                &mut self.engine.ctx.func,
-                &mut self.engine.builder_context,
-            );
+            let mut builder =
+                FunctionBuilder::new(&mut self.engine.ctx.func, &mut self.engine.builder_context);
 
             // Import helper function references into current function
             let set_global_func = self
@@ -281,12 +279,20 @@ impl<'a> JitCompiler<'a> {
                     Opcode::True => {
                         let bits = ElyValue::bool(true).0 as i64;
                         let i64_val = builder.ins().iconst(types::I64, bits);
-                        eval_stack.push(builder.ins().bitcast(types::F64, MemFlags::new(), i64_val));
+                        eval_stack.push(builder.ins().bitcast(
+                            types::F64,
+                            MemFlags::new(),
+                            i64_val,
+                        ));
                     }
                     Opcode::False => {
                         let bits = ElyValue::bool(false).0 as i64;
                         let i64_val = builder.ins().iconst(types::I64, bits);
-                        eval_stack.push(builder.ins().bitcast(types::F64, MemFlags::new(), i64_val));
+                        eval_stack.push(builder.ins().bitcast(
+                            types::F64,
+                            MemFlags::new(),
+                            i64_val,
+                        ));
                     }
                     Opcode::Closure => {
                         let const_idx = chunk.code[ip] as usize;
@@ -296,12 +302,18 @@ impl<'a> JitCompiler<'a> {
                             .ok_or("Constant not found in chunk pool for Opcode::Closure")?;
                         let bits = const_val.0 as i64;
                         let i64_val = builder.ins().iconst(types::I64, bits);
-                        eval_stack.push(builder.ins().bitcast(types::F64, MemFlags::new(), i64_val));
+                        eval_stack.push(builder.ins().bitcast(
+                            types::F64,
+                            MemFlags::new(),
+                            i64_val,
+                        ));
                     }
                     Opcode::DefineGlobal => {
                         let const_idx = chunk.code[ip] as usize;
                         ip += 1;
-                        let const_val = chunk.get_constant(const_idx).ok_or("Global name constant not found")?;
+                        let const_val = chunk
+                            .get_constant(const_idx)
+                            .ok_or("Global name constant not found")?;
                         let name_id = const_val.as_obj() as u32;
 
                         let val = eval_stack.pop().ok_or("Stack underflow in DefineGlobal")?;
@@ -312,7 +324,9 @@ impl<'a> JitCompiler<'a> {
                     Opcode::GetGlobal => {
                         let const_idx = chunk.code[ip] as usize;
                         ip += 1;
-                        let const_val = chunk.get_constant(const_idx).ok_or("Global name constant not found")?;
+                        let const_val = chunk
+                            .get_constant(const_idx)
+                            .ok_or("Global name constant not found")?;
                         let name_id = const_val.as_obj() as u32;
 
                         let id_val = builder.ins().iconst(types::I32, name_id as i64);
@@ -324,7 +338,9 @@ impl<'a> JitCompiler<'a> {
                     Opcode::SetGlobal => {
                         let const_idx = chunk.code[ip] as usize;
                         ip += 1;
-                        let const_val = chunk.get_constant(const_idx).ok_or("Global name constant not found")?;
+                        let const_val = chunk
+                            .get_constant(const_idx)
+                            .ok_or("Global name constant not found")?;
                         let name_id = const_val.as_obj() as u32;
 
                         let val = *eval_stack.last().ok_or("Stack underflow in SetGlobal")?;
@@ -338,7 +354,11 @@ impl<'a> JitCompiler<'a> {
 
                         let mut args = Vec::with_capacity(arg_count);
                         for _ in 0..arg_count {
-                            args.push(eval_stack.pop().ok_or("Stack underflow in Call arguments")?);
+                            args.push(
+                                eval_stack
+                                    .pop()
+                                    .ok_or("Stack underflow in Call arguments")?,
+                            );
                         }
                         args.reverse();
 
@@ -355,10 +375,17 @@ impl<'a> JitCompiler<'a> {
                                 builder.inst_results(inst)[0]
                             }
                             2 => {
-                                let inst = builder.ins().call(call_2_func, &[callee_i64, args[0], args[1]]);
+                                let inst = builder
+                                    .ins()
+                                    .call(call_2_func, &[callee_i64, args[0], args[1]]);
                                 builder.inst_results(inst)[0]
                             }
-                            _ => return Err(format!("JIT does not yet support calls with {} arguments", arg_count)),
+                            _ => {
+                                return Err(format!(
+                                    "JIT does not yet support calls with {} arguments",
+                                    arg_count
+                                ));
+                            }
                         };
                         eval_stack.push(res);
                     }
@@ -492,8 +519,12 @@ impl<'a> JitCompiler<'a> {
                         eval_stack.push(res);
                     }
                     Opcode::ShiftLeft => {
-                        let b = eval_stack.pop().ok_or("Stack underflow in Opcode::ShiftLeft")?;
-                        let a = eval_stack.pop().ok_or("Stack underflow in Opcode::ShiftLeft")?;
+                        let b = eval_stack
+                            .pop()
+                            .ok_or("Stack underflow in Opcode::ShiftLeft")?;
+                        let a = eval_stack
+                            .pop()
+                            .ok_or("Stack underflow in Opcode::ShiftLeft")?;
                         let a_int = builder.ins().fcvt_to_sint(types::I64, a);
                         let b_int = builder.ins().fcvt_to_sint(types::I64, b);
                         let res_int = builder.ins().ishl(a_int, b_int);
@@ -501,8 +532,12 @@ impl<'a> JitCompiler<'a> {
                         eval_stack.push(res);
                     }
                     Opcode::ShiftRight => {
-                        let b = eval_stack.pop().ok_or("Stack underflow in Opcode::ShiftRight")?;
-                        let a = eval_stack.pop().ok_or("Stack underflow in Opcode::ShiftRight")?;
+                        let b = eval_stack
+                            .pop()
+                            .ok_or("Stack underflow in Opcode::ShiftRight")?;
+                        let a = eval_stack
+                            .pop()
+                            .ok_or("Stack underflow in Opcode::ShiftRight")?;
                         let a_int = builder.ins().fcvt_to_sint(types::I64, a);
                         let b_int = builder.ins().fcvt_to_sint(types::I64, b);
                         let res_int = builder.ins().sshr(a_int, b_int);
@@ -528,9 +563,8 @@ impl<'a> JitCompiler<'a> {
                         let target_block = *blocks.get(&target).unwrap();
                         let fallthrough_block = *blocks.get(&ip).unwrap();
 
-                        let cond_val = *eval_stack
-                            .last()
-                            .ok_or("Stack underflow in JumpIfFalse")?;
+                        let cond_val =
+                            *eval_stack.last().ok_or("Stack underflow in JumpIfFalse")?;
                         let zero = builder.ins().f64const(0.0);
                         let is_falsy = builder.ins().fcmp(FloatCC::Equal, cond_val, zero);
 

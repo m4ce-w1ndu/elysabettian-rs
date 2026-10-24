@@ -1,11 +1,15 @@
-use std::mem;
 use crate::heap::HeapObject;
-use crate::vm::{InterpretResult, VM, JIT_HOT_THRESHOLD};
+use crate::vm::{InterpretResult, JIT_HOT_THRESHOLD, VM};
 use ely_core::value::Value;
+use std::mem;
 
 impl VM {
     /// Attempts to execute a function via native JIT compilation if the hot-path threshold is reached.
-    pub(crate) fn try_call_jit(&mut self, func_id: usize, arg_count: usize) -> Result<bool, InterpretResult> {
+    pub(crate) fn try_call_jit(
+        &mut self,
+        func_id: usize,
+        arg_count: usize,
+    ) -> Result<bool, InterpretResult> {
         let (arity, chunk, is_hot, existing_jit) = match self.heap.get_mut(func_id) {
             Some(HeapObject::Function(func)) => {
                 if arg_count != func.arity {

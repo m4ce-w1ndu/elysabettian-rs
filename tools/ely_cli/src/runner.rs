@@ -23,9 +23,9 @@ pub fn run_source(
     };
 
     if jit_only {
-        let engine = vm
-            .jit_engine
-            .get_or_insert_with(|| ely_jit::engine::JitEngine::new().expect("Failed to initialize JIT engine"));
+        let engine = vm.jit_engine.get_or_insert_with(|| {
+            ely_jit::engine::JitEngine::new().expect("Failed to initialize JIT engine")
+        });
         match run_jit(&chunk, engine, dump_ir, dump_asm) {
             Ok(_) => InterpretResult::Ok,
             Err(err) => {

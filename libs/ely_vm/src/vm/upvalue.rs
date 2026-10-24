@@ -56,7 +56,12 @@ impl VM {
     }
 
     /// Mutates the value referenced by a closure's upvalue.
-    pub(crate) fn set_upvalue_value(&mut self, closure_id: usize, slot: usize, value: Value) -> bool {
+    pub(crate) fn set_upvalue_value(
+        &mut self,
+        closure_id: usize,
+        slot: usize,
+        value: Value,
+    ) -> bool {
         let upvalue_id = match self.heap.get(closure_id) {
             Some(HeapObject::Closure(closure)) => match closure.upvalues.get(slot) {
                 Some(&id) => id,

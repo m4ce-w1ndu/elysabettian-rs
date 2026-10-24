@@ -1,7 +1,7 @@
 use ely_core::interner::StringInterner;
 use ely_vm::vm::VM;
-use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
+use rustyline::error::ReadlineError;
 
 use crate::runner::run_source;
 
@@ -13,7 +13,11 @@ pub fn run_repl(
     dump_ir: bool,
     dump_asm: bool,
 ) {
-    let mode = if jit_only { "JIT Native Mode" } else { "VM Tier-up Mode" };
+    let mode = if jit_only {
+        "JIT Native Mode"
+    } else {
+        "VM Tier-up Mode"
+    };
     println!("Elysabettian REPL (v0.1.0) [{}]", mode);
     println!("Type 'exit' or press Ctrl+D to exit.\n");
 

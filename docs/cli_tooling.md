@@ -88,3 +88,21 @@ Outputs are automatically written to `tools/results/`:
 - `benchmark_speedup.png`: Horizontal bar chart of Cranelift JIT speedup factors across all workloads.
 - `BENCHMARK_REPORT.md`: Comprehensive Markdown report with summary tables.
 - `benchmark_data.json`: Raw benchmark metrics for further analysis.
+
+---
+
+## 4. Pre-Compiled Binaries & CI/CD Release Pipeline
+
+Automated continuous integration and release workflows are configured in [`.github/workflows/`](../.github/workflows/):
+
+| Target | Architecture | Distribution | Format |
+| :--- | :--- | :--- | :--- |
+| `x86_64-unknown-linux-musl` | 64-bit x86 | Any Linux distribution (Static, zero glibc dependency) | `.tar.gz` |
+| `x86_64-unknown-linux-gnu` | 64-bit x86 | Linux (glibc dynamic) | `.tar.gz` |
+| `aarch64-apple-darwin` | 64-bit ARM | macOS Apple Silicon (M1/M2/M3/M4) | `.tar.gz` |
+| `x86_64-apple-darwin` | 64-bit x86 | macOS Intel | `.tar.gz` |
+| `x86_64-pc-windows-msvc` | 64-bit x86 | Windows 10/11 / Windows Server | `.zip` |
+
+### Triggering Releases
+- **Automatic:** Pushing any version tag matching `v*` (e.g., `git tag v0.1.0 && git push origin v0.1.0`) automatically builds all targets, generates `SHA256SUMS.txt`, and publishes a GitHub Release with attached assets.
+- **Manual (`workflow_dispatch`):** Runs the workflow from the GitHub Actions web interface on any commit, allowing ad-hoc or nightly builds without creating a tag.
