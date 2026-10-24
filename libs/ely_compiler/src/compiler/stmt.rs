@@ -57,14 +57,16 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    /// Compiles an `import("<module>");` or `import "<module>";` statement.
+    /// Compiles an import statement, supporting both import("name"); and import "name";
     pub(crate) fn import_statement(&mut self) {
+        // Parentheses are optional to support both function-like and statement-like import syntax
         let has_paren = self.parser.match_token(TokenType::OpenParen);
         self.parser.consume(
             TokenType::String,
             "Expected module name string after 'import'.",
         );
 
+        // Strip quotes from the module name literal
         let lexeme = self.parser.previous.lexeme;
         let module_name = if lexeme.len() >= 2 {
             &lexeme[1..lexeme.len() - 1]

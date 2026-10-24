@@ -45,6 +45,7 @@ impl<'a> Compiler<'a> {
         );
         let name = self.parser.previous;
 
+        // Figure out if the variable is local or global once to avoid multiple scope lookups
         let (get_op, set_op, arg) = if let Some(slot) = self.resolve_local(name) {
             (Opcode::GetLocal, Opcode::SetLocal, slot)
         } else {
@@ -58,7 +59,6 @@ impl<'a> Compiler<'a> {
         self.emit_opcode(get_op);
         self.emit_byte(arg);
 
-        // Emit increment or decrement numeric constant
         self.emit_constant(Value::number(1.0));
 
         if is_inc {
@@ -74,15 +74,15 @@ impl<'a> Compiler<'a> {
     pub(crate) fn postfix_inc_dec(&mut self, get_op: Opcode, set_op: Opcode, arg: u8) {
         let is_inc = self.parser.previous.token_type == TokenType::PlusPlus;
 
-        // Take the old value
+        // Postfix trick: push the current value twice.
+        // The first copy stays on the stack as the expression result (old value),
+        // while the second copy is modified and saved back into the variable.
         self.emit_opcode(get_op);
         self.emit_byte(arg);
 
-        // Take the old value again
         self.emit_opcode(get_op);
         self.emit_byte(arg);
 
-        // Add or subtract 1.0
         self.emit_constant(Value::number(1.0));
         if is_inc {
             self.emit_opcode(Opcode::Add);
@@ -90,11 +90,10 @@ impl<'a> Compiler<'a> {
             self.emit_opcode(Opcode::Subtract);
         }
 
-        // Store the new value in the variable
+        // SetLocal/SetGlobal leaves the updated value on top of the stack.
+        // Pop that updated value so only the original old value remains on the stack.
         self.emit_opcode(set_op);
         self.emit_byte(arg);
-
-        // Remove the value from the stack
         self.emit_opcode(Opcode::Pop);
     }
 

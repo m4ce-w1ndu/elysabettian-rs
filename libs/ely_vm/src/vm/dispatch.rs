@@ -639,6 +639,7 @@ impl VM {
                             Some(s) => s.clone(),
                             None => return InterpretResult::RuntimeError,
                         };
+                    // Load built-in or external module into the VM's globals and native tables
                     if !self.registry.load(
                         &module_name,
                         &mut self.natives,

@@ -172,7 +172,7 @@ impl ModuleRegistry {
         globals: &mut HashMap<u32, Value>,
         interner: &mut StringInterner,
     ) -> bool {
-        // 1. Check built-in modules
+        // First check if it's one of the built-in modules (math, io, etc.)
         if let Some(module) = self.builtin_modules.get(name) {
             for &(fn_name, func) in &module.functions {
                 let id = interner.intern(fn_name);
@@ -186,7 +186,7 @@ impl ModuleRegistry {
             return true;
         }
 
-        // 2. Search for external shared object: lib<name>.so or <name>.so
+        // If not built-in, look for a shared library (.so or .dylib) in search paths
         let filenames = [
             format!("lib{}.so", name),
             format!("{}.so", name),
@@ -223,6 +223,7 @@ impl ModuleRegistry {
     ) -> Result<bool, Box<dyn std::error::Error>> {
         unsafe {
             let lib = libloading::Library::new(path)?;
+            // Each external plugin must expose an ely_init_module entrypoint
             let init_fn: libloading::Symbol<unsafe extern "C" fn(*mut ElyApi) -> i32> =
                 lib.get(b"ely_init_module\0")?;
 
@@ -232,6 +233,7 @@ impl ModuleRegistry {
                 interner,
             };
 
+            // Pass the C API trampolines so the dynamic library can register its symbols
             let mut api = ElyApi {
                 ctx: &mut load_ctx as *mut _ as *mut c_void,
                 register_fn: c_register_fn,
@@ -240,6 +242,7 @@ impl ModuleRegistry {
 
             let status = init_fn(&mut api);
             if status == 0 {
+                // Keep the library loaded in memory for the lifetime of the VM
                 self.loaded_libraries.push(lib);
                 Ok(true)
             } else {
