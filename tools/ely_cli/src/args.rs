@@ -6,7 +6,7 @@ use std::path::PathBuf;
 #[command(
     name = "ely",
     author = "m4ce-w1ndu",
-    version = "0.1.0",
+    version,
     about = "Elysabettian programming language runtime, JIT compiler, and REPL"
 )]
 pub struct Cli {

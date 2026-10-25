@@ -304,3 +304,24 @@ fn test_vm_interpret_import_statement() {
     assert_eq!(vm.globals.get(&b_id).unwrap().as_number(), 32.0);
     assert!(vm.globals.get(&t_id).unwrap().as_number() > 0.0);
 }
+
+#[test]
+fn test_vm_interpret_multiple_string_constants_across_chunks() {
+    let mut vm = VM::new();
+    let chunk1 = ely_compiler::compiler::compile("var s1 = 'cc';", &mut vm.interner).unwrap();
+    let res1 = vm.interpret(&chunk1);
+    assert_eq!(res1, InterpretResult::Ok);
+
+    let chunk2 = ely_compiler::compiler::compile("var s2 = 'ciao';", &mut vm.interner).unwrap();
+    let res2 = vm.interpret(&chunk2);
+    assert_eq!(res2, InterpretResult::Ok);
+
+    let s1_id = vm.interner.intern("s1");
+    let s2_id = vm.interner.intern("s2");
+
+    let val1 = *vm.globals.get(&s1_id).unwrap();
+    let val2 = *vm.globals.get(&s2_id).unwrap();
+
+    assert_eq!(vm.format_value(val1), "cc");
+    assert_eq!(vm.format_value(val2), "ciao");
+}

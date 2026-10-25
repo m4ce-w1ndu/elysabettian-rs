@@ -24,11 +24,14 @@ pub fn register_jit_strings(strings: &[String]) {
     });
 }
 
-/// Appends string constants to the current JIT compilation session.
-pub fn append_jit_strings(strings: &[String]) {
+/// Appends string constants to the current JIT compilation session and returns the starting index.
+pub fn append_jit_strings(strings: &[String]) -> usize {
     JIT_STRINGS.with(|s| {
-        s.borrow_mut().extend(strings.iter().cloned());
-    });
+        let mut borrowed = s.borrow_mut();
+        let base_idx = borrowed.len();
+        borrowed.extend(strings.iter().cloned());
+        base_idx
+    })
 }
 
 /// Sets or defines a global variable in the JIT runtime state.

@@ -11,6 +11,7 @@ use std::rc::Rc;
 use crate::frame::CallFrame;
 use crate::heap::HeapObject;
 use ely_core::chunk::Chunk;
+use ely_core::opcode::Opcode;
 use ely_core::value::Value;
 
 /// Represents the outcome of interpreting a bytecode chunk.
@@ -72,8 +73,11 @@ impl VM {
 
     /// Recursively loads string constants and compiled functions onto the heap and links their handles.
     fn load_chunk_objects(&mut self, chunk: &mut Chunk) {
+        let mut string_vals = Vec::with_capacity(chunk.string_constants.len());
         for s in &chunk.string_constants {
-            self.allocate_object(HeapObject::String(s.clone()));
+            let val = self.allocate_object(HeapObject::String(s.clone()));
+            ely_jit::runtime::append_jit_strings(&[s.clone()]);
+            string_vals.push(val);
         }
 
         let mut func_vals = Vec::with_capacity(chunk.function_constants.len());
@@ -85,11 +89,58 @@ impl VM {
             func_vals.push(val);
         }
 
-        for (i, &val) in func_vals.iter().enumerate() {
-            for c in chunk.constants.iter_mut() {
-                if c.is_obj() && c.as_obj() as usize == i {
-                    *c = val;
+        // Patch constants in chunk.constants using chunk.code opcode context
+        let mut ip = 0;
+        while ip < chunk.code.len() {
+            if let Ok(opcode) = Opcode::try_from(chunk.code[ip]) {
+                ip += 1;
+                match opcode {
+                    Opcode::Constant => {
+                        let const_idx = chunk.code[ip] as usize;
+                        ip += 1;
+                        if let Some(c) = chunk.constants.get_mut(const_idx) {
+                            if c.is_obj() {
+                                let orig_idx = c.as_obj() as usize;
+                                if let Some(&real_val) = string_vals.get(orig_idx) {
+                                    *c = real_val;
+                                }
+                            }
+                        }
+                    }
+                    Opcode::Closure => {
+                        let const_idx = chunk.code[ip] as usize;
+                        ip += 1;
+                        if let Some(c) = chunk.constants.get_mut(const_idx) {
+                            if c.is_obj() {
+                                let orig_idx = c.as_obj() as usize;
+                                if let Some(&real_val) = func_vals.get(orig_idx) {
+                                    *c = real_val;
+                                }
+                            }
+                        }
+                    }
+                    Opcode::GetLocal
+                    | Opcode::SetLocal
+                    | Opcode::GetGlobal
+                    | Opcode::DefineGlobal
+                    | Opcode::SetGlobal
+                    | Opcode::Call
+                    | Opcode::Class
+                    | Opcode::GetProperty
+                    | Opcode::SetProperty
+                    | Opcode::Method
+                    | Opcode::Invoke
+                    | Opcode::SuperInvoke
+                    | Opcode::Import => {
+                        ip += 1;
+                    }
+                    Opcode::Jump | Opcode::JumpIfFalse | Opcode::Loop => {
+                        ip += 2;
+                    }
+                    _ => {}
                 }
+            } else {
+                ip += 1;
             }
         }
     }

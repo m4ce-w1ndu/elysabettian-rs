@@ -18,7 +18,11 @@ pub fn run_repl(
     } else {
         "VM Tier-up Mode"
     };
-    println!("Elysabettian REPL (v0.1.0) [{}]", mode);
+    println!(
+        "Elysabettian REPL (v{}) [{}]",
+        env!("CARGO_PKG_VERSION"),
+        mode
+    );
     println!("Type 'exit' or press Ctrl+D to exit.\n");
 
     let mut rl = match DefaultEditor::new() {
