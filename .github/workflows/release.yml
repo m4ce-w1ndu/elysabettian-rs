@@ -41,7 +41,7 @@ jobs:
             package_name: elysabettian-macos-arm64
             use_musl: false
           # macOS Intel (x86_64)
-          - os: macos-13
+          - os: macos-latest
             target: x86_64-apple-darwin
             binary_name: ely_cli
             package_name: elysabettian-macos-x86_64
